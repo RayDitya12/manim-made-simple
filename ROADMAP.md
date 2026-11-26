@@ -17,7 +17,7 @@ Build in this order. Each task is one pull request unless noted. Tick the checkb
   Acceptance: script prints versions on the dev machine and exits non-zero with a clear message when something is missing.
 - [x] **1.2 Fixed Manim template** `backend/scenes/text_scene.py`: reads params from the JSON file at `MTS_PARAMS`, supports all three animations, text color, outline, solid background.
   Acceptance: hand-written params JSON produces a 480p MP4 for each animation; outline visibly sits behind the fill.
-- [ ] **1.3 Pydantic models and validation** (`models.py`) exactly per SPEC.md section 5.
+- [x] **1.3 Pydantic models and validation** (`models.py`) exactly per SPEC.md section 5.
   Acceptance: tests cover valid input, every boundary, bad hex colors, too-long text, unknown animation/font.
 - [ ] **1.4 Render function** (`render.py`): validate, write params JSON, run Manim via `subprocess` (arg list, timeout), return the output path.
   Acceptance: test renders a 1-second preview clip; timeout test kills the process; no `shell=True` anywhere (grep shows none).

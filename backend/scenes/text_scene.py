@@ -9,9 +9,10 @@ Two schema fields are validated but not acted on here:
 
 * ``quality`` -- the caller turns the preset into ``-r`` / ``--fps`` flags
   (``backend/app/render.py``, ROADMAP 1.4).
-* ``font`` -- the whitelist of bundled font ids and their license texts arrives
-  in ROADMAP 1.5. Until then an omitted or ``null`` font means the system
-  default face (Manim's ``Text(font="")``).
+* ``font`` -- a bundled whitelist id, registered with Pango by
+  :func:`register_bundled_font` before the text is built (ROADMAP 1.5). An omitted
+  or ``null`` font still means the system default face, which only hand-written
+  parameter files can ask for.
 
 Run it by hand with a hand-written parameters file::
 
@@ -27,12 +28,24 @@ import unicodedata
 from pathlib import Path
 from typing import Any
 
+import manimpango
 from manim import *
 
 PARAMS_ENV_VAR = "MTS_PARAMS"
+FONTS_DIR = Path(__file__).resolve().parents[1] / "fonts"
+FONT_FILE_SUFFIX = ".ttf"
 
 ANIMATIONS: tuple[str, ...] = ("write", "fade_in", "typewriter")
 QUALITIES: tuple[str, ...] = ("preview", "hd")
+BUNDLED_FONTS: tuple[str, ...] = (
+    "Inter",
+    "Poppins",
+    "Montserrat",
+    "Roboto",
+    "Playfair Display",
+    "Bebas Neue",
+    "Fira Code",
+)
 SOLID = "solid"
 DEFERRED_BACKGROUNDS: tuple[str, ...] = ("transparent",)  # ROADMAP 4.1
 
@@ -248,6 +261,26 @@ def load_params(path: Path) -> dict[str, Any]:
     return validate_params(raw)
 
 
+def font_file_for(font_id: str) -> Path:
+    """Return the bundled file for a whitelist font id."""
+    return FONTS_DIR / f"{font_id.replace(' ', '')}{FONT_FILE_SUFFIX}"
+
+
+def register_bundled_font(font_id: str) -> None:
+    """Make a bundled font visible to Pango (SPEC.md section 9).
+
+    A name outside the whitelist is left alone: only a hand-written parameters file
+    can ask for one, and then it means a font already installed on the system.
+    """
+    if not font_id or font_id not in BUNDLED_FONTS:
+        return
+    path = font_file_for(font_id)
+    if not path.is_file():
+        raise ParamsError("font_file_missing", f"no bundled font file named {path.name}.")
+    if not manimpango.register_font(str(path)):
+        raise ParamsError("font_registration_failed", f"{path.name} could not be loaded.")
+
+
 def build_text(params: dict[str, Any]) -> Text:
     """Build the text mobject, with the outline drawn behind the fill."""
     text = Text(
@@ -283,6 +316,7 @@ class MmsTextScene(Scene):
 
     def setup(self) -> None:
         self.params: dict[str, Any] = load_params(params_file_from_env())
+        register_bundled_font(self.params["font"])
         background_color = ManimColor(self.params["background"]["color"])
         self.camera.background_color = background_color
         config.background_color = background_color

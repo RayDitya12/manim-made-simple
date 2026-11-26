@@ -11,11 +11,10 @@ English ``message`` is the fallback, and ``params`` holds the numbers a
 translated sentence needs (limits, counts). No raw user input is put in a
 message.
 
-``font`` takes ids from the SPEC.md section 9 whitelist. The font files and
-their license texts are bundled by ROADMAP 1.5; until then an id accepted here
-may still fall back to the system face at render time. This layer is stricter
-than the template: ``font`` has to be a whitelisted id, so ``""`` and ``null``
-are rejected rather than read as "whatever the system default is".
+``font`` takes ids from the SPEC.md section 9 whitelist, which is the set of fonts
+bundled in ``backend/fonts/`` with their OFL texts. This layer is stricter than the
+template: ``font`` has to be a whitelisted id, so ``""`` and ``null`` are rejected
+rather than read as "whatever the system default is".
 """
 
 from __future__ import annotations

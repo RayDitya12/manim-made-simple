@@ -19,7 +19,7 @@ Build in this order. Each task is one pull request unless noted. Tick the checkb
   Acceptance: hand-written params JSON produces a 480p MP4 for each animation; outline visibly sits behind the fill.
 - [x] **1.3 Pydantic models and validation** (`models.py`) exactly per SPEC.md section 5.
   Acceptance: tests cover valid input, every boundary, bad hex colors, too-long text, unknown animation/font.
-- [ ] **1.4 Render function** (`render.py`): validate, write params JSON, run Manim via `subprocess` (arg list, timeout), return the output path.
+- [x] **1.4 Render function** (`render.py`): validate, write params JSON, run Manim via `subprocess` (arg list, timeout), return the output path.
   Acceptance: test renders a 1-second preview clip; timeout test kills the process; no `shell=True` anywhere (grep shows none).
 - [ ] **1.5 Fonts**: add whitelisted OFL fonts with license texts; verify each really renders.
   Acceptance: a test renders one frame per font and shows the font actually differs. Note any OS-specific registration findings in the PR.

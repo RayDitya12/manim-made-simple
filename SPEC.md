@@ -108,7 +108,7 @@ All endpoints are under `/api`, bound to `127.0.0.1` only.
 
 | Method + path | Purpose | Response |
 |---|---|---|
-| `GET /api/health` | Self-check | `{status, manim_version, ffmpeg_version, python_version}` |
+| `GET /api/health` | Self-check | `{status, python_version, manim_version, ffmpeg_version, ffmpeg_source, error}` |
 | `GET /api/options` | Allowed values and limits | fonts, animations, limits, defaults |
 | `POST /api/render` | Start a render job | `202 {job_id, cached}` |
 | `GET /api/jobs/{job_id}` | Poll status | `{status: queued\|running\|done\|failed, video_url?, error?}` |
@@ -116,6 +116,7 @@ All endpoints are under `/api`, bound to `127.0.0.1` only.
 
 Behavior:
 
+- `GET /api/health` names the interpreter, Manim, and FFmpeg versions actually in use. `ffmpeg_source` is `cli` or `pyav`: Manim CE encodes through PyAV, so a missing `ffmpeg` binary is a warning, not a failure. When the machine cannot render, `status` is `degraded`, the missing version is `null`, and `error` holds a stable `code` (`manim_missing`, `ffmpeg_missing`) with an English `message` the UI can fall back to.
 - Jobs run on a single in-process worker (one render at a time, FIFO). No Redis, no Celery.
 - **Cache key** = SHA-256 of canonical JSON (sorted keys) of validated params + app version + Manim version + template version. Same key means serve the existing file and return `cached: true`.
 - Video file names are `<sha256>-<quality>.<ext>`. The video endpoint must validate `name` against a strict regex and resolve inside the output directory only (no path traversal).

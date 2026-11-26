@@ -90,11 +90,11 @@ def health_payload(
 ) -> dict[str, Any]:
     """Assemble the ``/api/health`` body from the three environment probes.
 
-    SPEC.md section 6 defines the shape as ``{status, manim_version, ffmpeg_version,
-    python_version}``. When a component is missing its version is ``null`` rather than
-    a guess and ``error`` carries one of the stable codes below, so the UI can show a
-    translated sentence instead of a stack trace. The app's name is not repeated here:
-    ``/api/options`` carries it.
+    SPEC.md section 6 defines the shape as ``{status, python_version, manim_version,
+    ffmpeg_version, ffmpeg_source, error}``. When a component is missing its version is
+    ``null`` rather than a guess and ``error`` carries one of the stable codes below, so
+    the UI can show a translated sentence instead of a stack trace. The app's name is not
+    repeated here: ``/api/options`` carries it.
     """
     try:
         manim_value: str | None = manim()

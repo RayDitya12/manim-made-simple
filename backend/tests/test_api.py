@@ -110,10 +110,16 @@ def test_health_is_ok_on_a_working_machine(health: dict[str, Any]) -> None:
     assert health["ffmpeg_source"] in {"cli", "pyav"}
 
 
-def test_health_carries_only_the_spec_version_fields(health: dict[str, Any]) -> None:
-    """SPEC.md section 6 lists four fields; the app identity lives in /api/options."""
-    assert {"status", "python_version", "manim_version", "ffmpeg_version"} <= set(health)
-    assert "app_name" not in health
+def test_health_has_exactly_the_documented_fields(health: dict[str, Any]) -> None:
+    """The field set SPEC.md section 6 promises for the self-check, and nothing else."""
+    assert set(health) == {
+        "status",
+        "python_version",
+        "manim_version",
+        "ffmpeg_version",
+        "ffmpeg_source",
+        "error",
+    }
 
 
 def test_health_names_a_missing_manim_with_a_stable_code() -> None:

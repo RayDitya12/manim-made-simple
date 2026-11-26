@@ -17,4 +17,5 @@ select = ["E", "F", "I", "UP", "B", "SIM", "W"]
 "backend/scenes/*.py" = ["F403", "F405"]
 
 [tool.pytest.ini_options]
+pythonpath = ["."]
 testpaths = ["backend/tests"]

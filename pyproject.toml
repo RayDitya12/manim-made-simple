@@ -1,0 +1,16 @@
+[project]
+name = "manim-made-simple"
+version = "0.0.0"
+description = "Create animated text videos in Manim style, no coding needed"
+requires-python = ">=3.11"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+extend-exclude = ["resources", "downloads", "media", "desktop/node_modules"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "W"]
+
+[tool.pytest.ini_options]
+testpaths = ["backend/tests"]

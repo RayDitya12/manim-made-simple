@@ -2,8 +2,45 @@
 
 Create animated text videos in Manim style, no coding needed.
 
-This repository is in the bootstrap stage. See `SPEC.md` for the product
-specification and `ROADMAP.md` for the build order.
+An open-source desktop app (Electron + FastAPI + Manim Community Edition) for
+non-technical users: fill in a form, press Generate, watch the video, tweak,
+download. Runs fully offline on your machine.
 
 This project is independent. It is not affiliated with or endorsed by the
 Manim Community, Grant Sanderson, or 3Blue1Brown.
+
+## Status
+
+Early development. See `SPEC.md` for the product specification and
+`ROADMAP.md` for the build order.
+
+## Development setup
+
+Requires Python 3.11 or newer.
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate          # Windows
+# source .venv/bin/activate     # Linux/macOS
+pip install -r requirements-dev.txt
+```
+
+Run the checks:
+
+```bash
+ruff check .
+ruff format --check .
+pytest -q
+```
+
+The packaged app bundles its own Python (via python-build-standalone), Manim
+and FFmpeg; those fetch scripts arrive in later roadmap phases. During
+development the backend runs against your activated Python environment.
+
+## Repository layout
+
+- `backend/` — FastAPI app, the fixed Manim scene template, bundled fonts, tests
+- `ui/` — plain HTML/CSS/JS frontend with English and Indonesian locales
+- `desktop/` — Electron shell (added in Phase 6)
+- `scripts/` — runtime fetch and build helpers
+- `.github/workflows/` — CI (added in Phase 5)

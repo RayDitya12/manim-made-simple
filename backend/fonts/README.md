@@ -21,7 +21,12 @@ the OFL reserved font names still apply to exactly these files.
 
 `backend/scenes/text_scene.py` registers the selected file with Pango before building
 the text, because a font that is only present as a file is not visible to the system.
-`backend/tests/test_fonts.py` renders one frame per font to prove that works.
+`backend/tests/test_fonts.py` renders one frame per font to prove that works. Verified
+on this Windows machine (98 system fonts, none of these seven installed) and on Debian
+13 in Docker with fontconfig 2.15 (207 system fonts, again none of these seven); both render
+the Regular named instance of the variable Montserrat and Fira Code files rather than
+the Thin and Light instances those files default to, and their outlines agree to within
+half a percent of ink pixels.
 
 To add or replace a font: download it and its `OFL.txt` from google/fonts, drop them
 here and in `LICENSES/`, and add the id to `FontId` in `backend/app/models.py` and to

@@ -28,7 +28,7 @@ Build in this order. Each task is one pull request unless noted. Tick the checkb
 
 - [x] **2.1 FastAPI app** with `GET /api/health` and `GET /api/options`.
   Acceptance: `curl` outputs shown; options match SPEC limits.
-- [ ] **2.2 Cache** (`cache.py`): canonical-JSON SHA-256 key, file naming, cleanup of files older than 7 days.
+- [x] **2.2 Cache** (`cache.py`): canonical-JSON SHA-256 key, file naming, cleanup of files older than 7 days.
   Acceptance: tests prove same params give the same key, any changed field gives a different key.
 - [ ] **2.3 Job queue** (`jobs.py`): single worker, `POST /api/render`, `GET /api/jobs/{id}`.
   Acceptance: render a sample via `curl`, poll to `done`, second identical request returns `cached: true` instantly; invalid payload returns 422 with a stable error `code` and a short English message.

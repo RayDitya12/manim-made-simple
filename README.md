@@ -33,6 +33,14 @@ ruff format --check .
 pytest -q
 ```
 
+Run the backend and ask it what this machine can do:
+
+```bash
+python -m backend.app.main            # serves http://127.0.0.1:8000
+curl http://127.0.0.1:8000/api/health  # environment self-check
+curl http://127.0.0.1:8000/api/options # allowed values and limits for the form
+```
+
 The packaged app bundles its own Python (via python-build-standalone), Manim
 and FFmpeg; those fetch scripts arrive in later roadmap phases. During
 development the backend runs against your activated Python environment.

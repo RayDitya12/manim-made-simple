@@ -27,13 +27,20 @@ MANIM_IMPORT_NAME = "manim"
 
 @dataclass(frozen=True)
 class CheckResult:
-    """Outcome of a single environment check."""
+    """Outcome of a single environment check.
+
+    ``version`` and ``source`` carry the same facts ``detail`` states in prose, so a
+    caller that needs the value (the ``/api/health`` endpoint, ROADMAP 2.1) does not
+    have to parse a sentence meant for a terminal.
+    """
 
     name: str
     ok: bool
     detail: str
     hint: str = ""
     warn_only: bool = False
+    version: str = ""
+    source: str = ""
 
 
 def check_python(version_info: tuple[int, ...] | None = None) -> CheckResult:
@@ -48,8 +55,12 @@ def check_python(version_info: tuple[int, ...] | None = None) -> CheckResult:
             ok=False,
             detail=f"{version_text} is older than {required}",
             hint=f"Install Python {required} or newer and run this script with it.",
+            version=version_text,
+            source="interpreter",
         )
-    return CheckResult("Python", ok=True, detail=version_text)
+    return CheckResult(
+        "Python", ok=True, detail=version_text, version=version_text, source="interpreter"
+    )
 
 
 def check_manim() -> CheckResult:
@@ -65,7 +76,9 @@ def check_manim() -> CheckResult:
             hint="Install it with 'python -m pip install -r requirements.txt'.",
         )
     version = getattr(manim, "__version__", "unknown")
-    return CheckResult("Manim CE", ok=True, detail=str(version))
+    return CheckResult(
+        "Manim CE", ok=True, detail=str(version), version=str(version), source="package"
+    )
 
 
 def _parse_ffmpeg_version(output: str) -> str:
@@ -124,6 +137,8 @@ def check_ffmpeg(runner=subprocess.run) -> CheckResult:
             hint="Install the FFmpeg CLI before ROADMAP Phase 4 (ffprobe checks "
             "and gradient compositing). Packaged builds bundle their own; see "
             "ROADMAP task 6.3.",
+            version=library_version,
+            source="pyav",
         )
     try:
         completed = runner(
@@ -148,7 +163,13 @@ def check_ffmpeg(runner=subprocess.run) -> CheckResult:
             hint="Reinstall FFmpeg or fix the 'ffmpeg' entry on PATH.",
         )
     version = _parse_ffmpeg_version(completed.stdout)
-    return CheckResult("FFmpeg", ok=True, detail=f"{version} ({executable})")
+    return CheckResult(
+        "FFmpeg",
+        ok=True,
+        detail=f"{version} ({executable})",
+        version=version,
+        source="cli",
+    )
 
 
 def run_checks() -> list[CheckResult]:

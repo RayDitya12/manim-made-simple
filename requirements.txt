@@ -1,0 +1,5 @@
+# Backend runtime stack (SPEC.md section 4). No extras beyond these without a PR note.
+manim==0.22.1
+fastapi==0.165.0
+uvicorn==0.54.0
+pydantic==2.14.4

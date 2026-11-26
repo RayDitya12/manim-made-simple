@@ -26,7 +26,7 @@ Build in this order. Each task is one pull request unless noted. Tick the checkb
 
 ## Phase 2: Backend API
 
-- [ ] **2.1 FastAPI app** with `GET /api/health` and `GET /api/options`.
+- [x] **2.1 FastAPI app** with `GET /api/health` and `GET /api/options`.
   Acceptance: `curl` outputs shown; options match SPEC limits.
 - [ ] **2.2 Cache** (`cache.py`): canonical-JSON SHA-256 key, file naming, cleanup of files older than 7 days.
   Acceptance: tests prove same params give the same key, any changed field gives a different key.

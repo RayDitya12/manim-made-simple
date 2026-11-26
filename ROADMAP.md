@@ -21,7 +21,7 @@ Build in this order. Each task is one pull request unless noted. Tick the checkb
   Acceptance: tests cover valid input, every boundary, bad hex colors, too-long text, unknown animation/font.
 - [x] **1.4 Render function** (`render.py`): validate, write params JSON, run Manim via `subprocess` (arg list, timeout), return the output path.
   Acceptance: test renders a 1-second preview clip; timeout test kills the process; no `shell=True` anywhere (grep shows none).
-- [ ] **1.5 Fonts**: add whitelisted OFL fonts with license texts; verify each really renders.
+- [x] **1.5 Fonts**: add whitelisted OFL fonts with license texts; verify each really renders.
   Acceptance: a test renders one frame per font and shows the font actually differs. Note any OS-specific registration findings in the PR.
 
 ## Phase 2: Backend API

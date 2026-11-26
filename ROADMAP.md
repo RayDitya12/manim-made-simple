@@ -15,7 +15,7 @@ Build in this order. Each task is one pull request unless noted. Tick the checkb
 
 - [x] **1.1 Environment check**: `scripts/check_env.py` verifies Python version, Manim CE, FFmpeg, and prints their versions.
   Acceptance: script prints versions on the dev machine and exits non-zero with a clear message when something is missing.
-- [ ] **1.2 Fixed Manim template** `backend/scenes/text_scene.py`: reads params from the JSON file at `MTS_PARAMS`, supports all three animations, text color, outline, solid background.
+- [x] **1.2 Fixed Manim template** `backend/scenes/text_scene.py`: reads params from the JSON file at `MTS_PARAMS`, supports all three animations, text color, outline, solid background.
   Acceptance: hand-written params JSON produces a 480p MP4 for each animation; outline visibly sits behind the fill.
 - [ ] **1.3 Pydantic models and validation** (`models.py`) exactly per SPEC.md section 5.
   Acceptance: tests cover valid input, every boundary, bad hex colors, too-long text, unknown animation/font.

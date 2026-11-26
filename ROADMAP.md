@@ -8,7 +8,7 @@ Build in this order. Each task is one pull request unless noted. Tick the checkb
 
 - [x] **0.1 Bootstrap repo `manim-made-simple` and protect `main`** (AGENTS.md section 3.1)
   Acceptance: repo exists on GitHub; direct push to `main` is rejected (show the error); squash-only merges enabled.
-- [ ] **0.2 Project scaffolding**: folder layout from SPEC.md section 4, `.gitignore`, `pyproject.toml` (ruff, pytest), `requirements.txt`, README with dev setup.
+- [x] **0.2 Project scaffolding**: folder layout from SPEC.md section 4, `.gitignore`, `pyproject.toml` (ruff, pytest), `requirements.txt`, README with dev setup.
   Acceptance: `ruff check .` and `pytest -q` run (even with one trivial test).
 
 ## Phase 1: Render engine (no web yet)

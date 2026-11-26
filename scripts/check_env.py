@@ -1,9 +1,12 @@
 """Environment self-check for Manim Made Simple (ROADMAP task 1.1).
 
 Verifies the interpreter, Manim Community Edition, and FFmpeg are usable,
-printing each version. Exits non-zero with a clear message when something is
-missing. Run it with the same Python that the backend will use, e.g. from an
-activated virtualenv:
+printing each version. Exits non-zero when a required component is missing.
+A missing FFmpeg command line binary is a warning rather than a failure:
+Manim CE 0.22 writes video through PyAV, whose wheel bundles the FFmpeg
+libraries, so rendering works without it. The CLI is only needed from
+ROADMAP Phase 4 (ffprobe checks, gradient compositing). Run it with the same
+Python that the backend will use, e.g. from an activated virtualenv:
 
     python scripts/check_env.py
 
@@ -12,6 +15,7 @@ Standard library only; no new dependencies.
 
 from __future__ import annotations
 
+import importlib.util
 import shutil
 import subprocess
 import sys
@@ -29,6 +33,7 @@ class CheckResult:
     ok: bool
     detail: str
     hint: str = ""
+    warn_only: bool = False
 
 
 def check_python(version_info: tuple[int, ...] | None = None) -> CheckResult:
@@ -78,17 +83,47 @@ def _parse_ffmpeg_version(output: str) -> str:
     return "unknown"
 
 
+def pyav_ffmpeg_version() -> str | None:
+    """Return the FFmpeg version PyAV links against, or None when unavailable.
+
+    Manim CE 0.22 encodes through PyAV, so its bundled FFmpeg libraries are what
+    actually produce the MP4 files even when no 'ffmpeg' binary exists.
+    """
+
+    if importlib.util.find_spec("av") is None:
+        return None
+    try:
+        import av
+    except ImportError:
+        return None
+    version = getattr(av, "ffmpeg_version_info", None) or getattr(av, "__version__", None)
+    return str(version) if version else None
+
+
 def check_ffmpeg(runner=subprocess.run) -> CheckResult:
-    """Confirm an FFmpeg binary is on PATH and report its version."""
+    """Report the FFmpeg situation: a CLI binary, or the PyAV libraries instead."""
 
     executable = shutil.which("ffmpeg")
     if executable is None:
+        library_version = pyav_ffmpeg_version()
+        if library_version is None:
+            return CheckResult(
+                "FFmpeg",
+                ok=False,
+                warn_only=True,
+                detail="'ffmpeg' was not found on PATH and no PyAV fallback was detected",
+                hint="Install FFmpeg and put 'ffmpeg' on PATH, or install the "
+                "Manim requirements, which bring PyAV with them.",
+            )
         return CheckResult(
             "FFmpeg",
             ok=False,
-            detail="'ffmpeg' was not found on PATH",
-            hint="Install FFmpeg and make sure 'ffmpeg' is on PATH (packaged "
-            "builds bundle their own; see ROADMAP task 6.3).",
+            warn_only=True,
+            detail=f"no 'ffmpeg' on PATH; rendering uses FFmpeg {library_version} "
+            "bundled with PyAV",
+            hint="Install the FFmpeg CLI before ROADMAP Phase 4 (ffprobe checks "
+            "and gradient compositing). Packaged builds bundle their own; see "
+            "ROADMAP task 6.3.",
         )
     try:
         completed = runner(
@@ -123,7 +158,12 @@ def run_checks() -> list[CheckResult]:
 
 
 def format_line(result: CheckResult) -> str:
-    status = "ok" if result.ok else "MISSING"
+    if result.ok:
+        status = "ok"
+    elif result.warn_only:
+        status = "WARN"
+    else:
+        status = "MISSING"
     line = f"[{status:^7}] {result.name:<9} {result.detail}"
     if not result.ok and result.hint:
         line += f"\n            -> {result.hint}"
@@ -139,11 +179,15 @@ def main() -> int:
     for result in results:
         print(format_line(result))
 
-    missing = [result for result in results if not result.ok]
+    warnings = [result for result in results if not result.ok and result.warn_only]
+    missing = [result for result in results if not result.ok and not result.warn_only]
     print("")
     if missing:
         print(f"Result: {len(missing)} of {len(results)} checks FAILED.")
         return 1
+    if warnings:
+        print(f"Result: {len(results)} checks usable, {len(warnings)} warning(s).")
+        return 0
     print(f"Result: all {len(results)} checks passed.")
     return 0
 

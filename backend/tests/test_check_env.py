@@ -51,11 +51,32 @@ def test_manim_present_reports_version(check_env, monkeypatch) -> None:
     assert result.detail == "0.22.1"
 
 
-def test_ffmpeg_not_on_path(check_env, monkeypatch) -> None:
+def test_ffmpeg_missing_is_a_warning(check_env, monkeypatch) -> None:
     monkeypatch.setattr(check_env.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(check_env, "pyav_ffmpeg_version", lambda: "9.0.2")
     result = check_env.check_ffmpeg()
     assert not result.ok
-    assert "not found" in result.detail
+    assert result.warn_only
+    assert "9.0.2" in result.detail
+    assert "Phase 4" in result.hint
+
+
+def test_ffmpeg_missing_without_pyav_still_only_warns(check_env, monkeypatch) -> None:
+    monkeypatch.setattr(check_env.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(check_env, "pyav_ffmpeg_version", lambda: None)
+    result = check_env.check_ffmpeg()
+    assert not result.ok
+    assert result.warn_only
+    assert "PyAV" in result.detail
+    assert "requirements" in result.hint
+
+
+def test_pyav_fallback_finds_the_real_library(check_env) -> None:
+    """The fallback must work in the venv Manim is installed into."""
+
+    version = check_env.pyav_ffmpeg_version()
+    assert version is not None
+    assert version[0].isdigit()
 
 
 def test_ffmpeg_version_parsed(check_env, monkeypatch) -> None:
@@ -98,3 +119,27 @@ def test_main_exit_code_reflects_failures(check_env, monkeypatch, capsys) -> Non
     monkeypatch.setattr(check_env, "run_checks", lambda: [ok])
     assert check_env.main() == 0
     assert "all 1 checks passed" in capsys.readouterr().out
+
+
+def test_warning_does_not_fail_the_run(check_env, monkeypatch, capsys) -> None:
+    ok = check_env.CheckResult("Python", True, "3.12.10")
+    warn = check_env.CheckResult(
+        "FFmpeg", False, "no 'ffmpeg' on PATH", hint="install it later", warn_only=True
+    )
+    monkeypatch.setattr(check_env, "run_checks", lambda: [ok, warn])
+    assert check_env.main() == 0
+    printed = capsys.readouterr().out
+    assert "WARN" in printed
+    assert "1 warning" in printed
+
+
+def test_format_line_labels_each_severity(check_env) -> None:
+    assert check_env.format_line(check_env.CheckResult("Manim CE", False, "gone")).startswith(
+        "[MISSING]"
+    )
+    assert check_env.format_line(
+        check_env.CheckResult("FFmpeg", False, "no CLI", warn_only=True)
+    ).startswith("[ WARN  ]")
+    assert check_env.format_line(check_env.CheckResult("Python", True, "3.12.10")).startswith(
+        "[  ok   ]"
+    )

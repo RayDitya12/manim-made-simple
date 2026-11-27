@@ -119,9 +119,15 @@ For a PR touching any of the following, **do not merge**. Open the PR, add the l
 - `AGENTS.md`, `SPEC.md`, or the open decisions
 - `.github/workflows/**`
 - the LICENSE file or any license text
-- input validation, path handling, or subprocess code in `backend/app/` (security-sensitive)
-- Electron security settings in `desktop/`
 - any new runtime dependency
+
+Security-sensitive code is **not** owner-gated (owner decision, 2026-11-27): a PR that changes input validation, path handling, subprocess code in `backend/app/`, or Electron security settings in `desktop/` may be squash-merged by the agent when the rules in 3.3 hold **and** the PR description shows the evidence for that specific change:
+
+- the test names that cover the hostile input (traversal, malformed payload, bad `Host`, forbidden origin), not only a passing suite count;
+- one real request against a running app (`curl` output), so the merged behavior is demonstrated rather than asserted;
+- for `desktop/`, the rendered security-relevant settings quoted in the PR.
+
+Without that evidence the PR stays open with `needs-owner`, like any other.
 
 (The owner can remove this section if they prefer fully autonomous merging.)
 

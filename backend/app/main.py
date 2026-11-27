@@ -1,6 +1,6 @@
-"""The FastAPI app: metadata endpoints for ROADMAP task 2.1 (SPEC.md section 6).
+"""The FastAPI app: the API contract of SPEC.md section 6.
 
-Two endpoints live here so far:
+Endpoints so far:
 
 ``GET /api/health``
     Reports whether this machine can render, plus the interpreter, Manim and
@@ -11,25 +11,38 @@ Two endpoints live here so far:
     controls from this response instead of repeating the numbers, so a limit changed
     here is the only change needed.
 
+``POST /api/render``
+    Validates the parameters, hands them to the job queue (ROADMAP 2.3) and answers
+    ``202 {job_id, cached}`` without waiting for the render.
+
+``GET /api/jobs/{job_id}``
+    Reports ``queued | running | done | failed``, the ``video_url`` when the file exists,
+    and the stable error code when the render failed.
+
 FFmpeg follows the rule established by ``scripts/check_env.py``: a missing
 ``ffmpeg`` command line binary is a warning, not a failure, because Manim CE 0.22.1
 encodes through PyAV, whose wheel bundles the FFmpeg libraries. The versions come
 from the installed packages at request time rather than from the lockfile, so a
 report that names a version is a report about the interpreter that is really running.
 
-The render endpoints (ROADMAP 2.3), the video endpoint (2.4) and the host/CORS
-hardening (2.5) are deliberately not here yet; this task is the app shell only.
+The app owns one :class:`~backend.app.jobs.JobQueue`, whose cache lives in the data
+directory of :mod:`backend.app.data_dir`. The video endpoint (2.4) and the host/CORS
+hardening (2.5) are deliberately not here yet.
 """
 
 from __future__ import annotations
 
+import json
+import logging
 import sys
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
-from backend.app import app_meta
+from backend.app import app_meta, cache, data_dir, jobs
 from backend.app.models import (
     ANIMATIONS,
     FONTS,
@@ -41,9 +54,13 @@ from backend.app.models import (
     TOTAL_DURATION_MAX,
     TRANSPARENT,
     RenderParams,
+    RenderParamsError,
+    parse_params,
 )
 from backend.app.render import OUTPUT_EXTENSION, QUALITY_PRESETS
 from scripts import check_env
+
+logger = logging.getLogger("mms.api")
 
 #: Background types the UI may offer. ``transparent`` is listed as unavailable until
 #: ROADMAP 4.1 renders it, so the option appears in the API without being selectable.
@@ -102,9 +119,9 @@ def health_payload(
         manim_value = None
     ffmpeg_value = ffmpeg()
     if manim_value is None:
-        error = _health_error("manim_missing", "Manim is not installed in this Python.")
+        error = error_object("manim_missing", "Manim is not installed in this Python.")
     elif not ffmpeg_value["available"]:
-        error = _health_error(
+        error = error_object(
             "ffmpeg_missing",
             "no FFmpeg was found, not even the one bundled with PyAV.",
         )
@@ -120,9 +137,26 @@ def health_payload(
     }
 
 
-def _health_error(code: str, message: str) -> dict[str, Any]:
-    """The SPEC.md section 6 error object: a stable code plus an English fallback."""
-    return {"code": code, "message": message, "params": {}}
+def error_object(code: str, message: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    """The SPEC.md section 6 error object: a stable code plus an English fallback.
+
+    ``params`` carries the numbers a translated sentence needs. No user input is put in a
+    message, and none is echoed back here: the UI shows the translation of ``code``.
+    """
+    return {"code": code, "message": message, "params": dict(params or {})}
+
+
+def _error_response(
+    status_code: int,
+    code: str,
+    message: str,
+    params: dict[str, Any] | None = None,
+) -> JSONResponse:
+    """An error the API layer produces itself, in the same shape as a render failure."""
+    return JSONResponse(
+        status_code=status_code,
+        content={"error": error_object(code, message, params)},
+    )
 
 
 def _range(low: float | int, high: float | int) -> dict[str, float | int]:
@@ -170,15 +204,34 @@ def options_payload() -> dict[str, Any]:
     }
 
 
-def create_app() -> FastAPI:
-    """Build the backend app."""
+def create_app(job_queue: jobs.JobQueue | None = None) -> FastAPI:
+    """Build the backend app.
+
+    ``job_queue`` is injected by a test that wants a temporary cache directory and a stub
+    renderer; production gets a queue whose videos live in the data directory of
+    :mod:`backend.app.data_dir` (SPEC.md section 6).
+    """
+    render_queue = job_queue if job_queue is not None else jobs.JobQueue(data_dir.video_dir())
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        # Startup prepares the cache and drops videos older than seven days; shutdown asks
+        # the worker to stop so a quit does not leave a render thread behind.
+        render_queue.start()
+        try:
+            yield
+        finally:
+            render_queue.stop()
+
     app = FastAPI(
         title=app_meta.app_name(),
         version=app_meta.app_version(),
         docs_url=None,
         redoc_url=None,
         openapi_url="/api/openapi.json",
+        lifespan=lifespan,
     )
+    app.state.jobs = render_queue
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
@@ -187,6 +240,42 @@ def create_app() -> FastAPI:
     @app.get("/api/options")
     def options() -> dict[str, Any]:
         return options_payload()
+
+    @app.post("/api/render")
+    async def render(request: Request) -> JSONResponse:
+        """Accept a render request and answer ``202 {job_id, cached}`` (SPEC.md section 6).
+
+        Nothing here waits for Manim: the parameters are validated, the cache is consulted,
+        and the job is either already done or queued for the single worker.
+        """
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return _error_response(
+                422, "params_not_json", "the request body must be a JSON object."
+            )
+        try:
+            params = parse_params(body)
+        except RenderParamsError as exc:
+            return _error_response(422, exc.code, exc.message, exc.params)
+        try:
+            job, cached = render_queue.submit(params)
+        except cache.CacheError as exc:
+            # The machine cannot key a render, so it cannot render one either.
+            return _error_response(503, exc.code, exc.message, exc.params)
+        logger.info("%s job %s", "cached" if cached else "queued", job.id)
+        return JSONResponse(
+            status_code=202,
+            content={"job_id": job.id, "cached": cached},
+        )
+
+    @app.get("/api/jobs/{job_id}")
+    def job_status(job_id: str) -> JSONResponse:
+        """Poll one job. An unknown or malformed id is a 404 with a stable code."""
+        payload = render_queue.payload(job_id)
+        if payload is None:
+            return _error_response(404, "job_not_found", "no render job has this id.")
+        return JSONResponse(status_code=200, content=payload)
 
     return app
 
@@ -205,7 +294,9 @@ def main() -> int:
 
     host = "127.0.0.1"
     port = 8000
+    cache_dir = data_dir.describe()
     print(f"{app_meta.app_name()} backend on http://{host}:{port} (Ctrl+C to stop)")
+    print(f"render cache: {cache_dir['video_dir']} (from {cache_dir['source']})")
     uvicorn.run(app, host=host, port=port, log_level="warning")
     return 0
 
@@ -218,6 +309,7 @@ __all__ = [
     "BACKGROUND_TYPES",
     "app",
     "create_app",
+    "error_object",
     "ffmpeg_info",
     "health_payload",
     "main",

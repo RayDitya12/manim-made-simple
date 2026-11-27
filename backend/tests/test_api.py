@@ -2,8 +2,9 @@
 
 The requests are driven through the ASGI interface with a small helper instead of
 ``fastapi.testclient``, which would add ``httpx`` as a new dependency for no benefit
-here: both endpoints return a plain dictionary, so there is no response model, status
-selection, or header worth exercising.
+here: these endpoints return a plain dictionary, so only the status code and the body are
+worth exercising. The job endpoints, which do choose a status and read a body, are covered
+in ``test_jobs.py``.
 """
 
 from __future__ import annotations
@@ -295,12 +296,17 @@ def test_endpoints_are_looked_up_under_the_api_prefix(client: Any) -> None:
 
 def test_unknown_and_unprefixed_paths_are_not_found(client: Any) -> None:
     assert asgi_get(client, "/health")[0] == 404
-    assert asgi_get(client, "/api/render")[0] == 404
     assert asgi_get(client, "/api/nope")[0] == 404
 
 
+def test_the_render_endpoint_takes_post_only(client: Any) -> None:
+    """/api/render exists since ROADMAP 2.3 and accepts a body, never a GET."""
+    assert asgi_get(client, "/api/render")[0] == 405
+    assert asgi_get(client, "/api/jobs")[0] == 404
+
+
 def test_post_is_not_allowed_on_a_read_only_endpoint(client: Any) -> None:
-    """POST /api/render arrives with ROADMAP 2.3; nothing accepts a body yet."""
+    """The metadata endpoints answer GET only; the body belongs on /api/render."""
 
     async def call() -> int:
         scope = {

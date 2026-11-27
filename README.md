@@ -66,6 +66,11 @@ one of the quality ids, and `.mp4`. Anything else (including `../` in any spelli
 rejected with `400 {"error":{"code":"video_name_invalid", ...}}` before the filesystem is
 touched.
 
+The server also answers only a loopback `Host` header, and it names an origin in CORS only
+for `http://127.0.0.1:*` or `http://localhost:*`. A webpage the user happens to visit cannot
+drive the backend through the visitor's own machine: the request is refused with
+`400 {"error":{"code":"host_not_allowed", ...}}` before any route runs.
+
 Rendered videos are cached in the per-user data directory and reused when the
 parameters match. `MTS_DATA_DIR` says where; without it the OS default is used
 (`%LOCALAPPDATA%\manim-made-simple` on Windows,

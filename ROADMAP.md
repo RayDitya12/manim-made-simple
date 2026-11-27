@@ -34,7 +34,7 @@ Build in this order. Each task is one pull request unless noted. Tick the checkb
   Acceptance: render a sample via `curl`, poll to `done`, second identical request returns `cached: true` instantly; invalid payload returns 422 with a stable error `code` and a short English message.
 - [x] **2.4 Video endpoint** with strict name validation and `?download=1`.
   Acceptance: path traversal attempts (`../`, encoded variants) are rejected in tests; valid file streams and plays.
-- [ ] **2.5 Host and CORS hardening**: bind `127.0.0.1`, reject unexpected `Host` headers.
+- [x] **2.5 Host and CORS hardening**: bind `127.0.0.1`, reject unexpected `Host` headers.
   Acceptance: tests show a bad `Host` is rejected.
 
 ## Phase 3: User interface

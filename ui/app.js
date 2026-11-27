@@ -1,8 +1,8 @@
 /**
- * The interface: options in, controls built, render requested, video played
- * (ROADMAP task 3.1, SPEC.md section 8).
+ * The interface: options in, controls built, render requested, video played or saved
+ * (ROADMAP tasks 3.1 and 3.2, SPEC.md section 8).
  *
- * Three rules shape this file:
+ * Four rules shape this file:
  *
  * 1. The form is built from `GET /api/options`, never from numbers written here, so a limit
  *    changed in `backend/app/models.py` is the only change needed (SPEC.md section 5).
@@ -11,6 +11,9 @@
  * 3. Every string the user reads comes from `i18n.js`. The literals below that look like copy
  *    are the English fallbacks SPEC.md section 6 defines for an error object, and the locale's
  *    `error.*` key wins over each of them whenever it exists.
+ * 4. Every request owns a token, so Cancel retires the loop that is waiting instead of racing
+ *    it. The job itself is left running: SPEC.md section 6 says a render in progress is not
+ *    interrupted by the queue, and its file still reaches the cache.
  */
 
 import {
@@ -20,6 +23,7 @@ import {
   errorText,
   loadLocale,
   number,
+  seconds,
   t,
 } from "/i18n.js";
 
@@ -27,7 +31,19 @@ const ENDPOINTS = {
   options: "/api/options",
   render: "/api/render",
   job: "/api/jobs/",
+  video: "/api/videos/",
 };
+
+/** The quality `Download HD` asks for whatever the Quality dropdown shows (SPEC.md section 8). */
+const HD_QUALITY = "hd";
+
+/** The query SPEC.md section 6 defines for a video served as an attachment. */
+const DOWNLOAD_QUERY = "?download=1";
+
+/** Where the last settings are remembered, under the slug the options endpoint reports so the
+ *  name still lives in one place (SPEC.md section 3). Bump the suffix when a stored document
+ *  can no longer be restored as it is. */
+const SETTINGS_SUFFIX = "settings.v1";
 
 /** How often a running job is polled. Render progress is not reliably known, so the UI shows
  *  a status sentence rather than a percentage (SPEC.md section 8). */
@@ -37,8 +53,20 @@ const POLL_MS = 400;
 const FINAL_STATUSES = new Set(["done", "failed"]);
 
 /**
+ * How a slider's value is spoken. A range announces a bare number, which is no answer for a
+ * duration, so a field that has a unit names one through `aria-valuetext`. The words come from
+ * `Intl`, which owns the plural and the decimal separator with it (SPEC.md section 8), so they
+ * are not copy in the locale files. An outline width is a plain number with no unit to name.
+ */
+const UNIT_FORMATTERS = { seconds };
+
+/**
  * One entry per SPEC.md section 5 field: the control that edits it and the hint under it.
  * `limit` names the entry in `/api/options` that supplies min and max.
+ *
+ * `kind: "slider"` is the pair SPEC.md section 8 asks for: a range the user can drag and a
+ * number they can type. The number box holds the submitted value, so browser validation and
+ * `currentParams` work exactly as they do for a plain number field.
  */
 const CONTROLS = {
   text: { kind: "textarea", hint: "hint.text" },
@@ -48,26 +76,30 @@ const CONTROLS = {
     kind: "number",
     limit: "font_size",
     step: 1,
+    integer: true,
     hint: "hint.points",
   },
   animation_duration: {
-    kind: "number",
+    kind: "slider",
     limit: "animation_duration",
     step: 0.5,
+    unit: "seconds",
     hint: "hint.seconds",
   },
   hold_duration: {
-    kind: "number",
+    kind: "slider",
     limit: "hold_duration",
     step: 0.5,
+    unit: "seconds",
     hint: "hint.seconds",
   },
   text_color: { kind: "color", hint: null },
   outline_color: { kind: "color", hint: null },
   outline_width: {
-    kind: "number",
+    kind: "slider",
     limit: "outline_width",
     step: 0.5,
+    unit: null,
     hint: "hint.number",
   },
   background_type: { kind: "select", hint: null },
@@ -98,6 +130,9 @@ const ELEMENT_IDS = {
   settings: "settings",
   fields: "fields",
   generate: "generate",
+  download: "download-hd",
+  cancel: "cancel",
+  retry: "retry",
   busy: "busy",
   error: "job-error",
   errorText: "job-error-text",
@@ -107,6 +142,14 @@ const ELEMENT_IDS = {
 
 let options = null;
 const view = {};
+
+/** Raised by every new request and by Cancel. A wait whose token is no longer the current one
+ *  has been superseded, so it returns without touching the screen. */
+let runToken = 0;
+
+/** Which button `Try again` presses. The form is read again when it is, so the user can fix
+ *  what the error complained about and press it without a second step (SPEC.md section 8). */
+let lastAction = null;
 
 /** A failure that already has the SPEC.md section 6 shape the error line shows. */
 class ApiFailure extends Error {
@@ -118,6 +161,14 @@ class ApiFailure extends Error {
 
 function fieldId(name) {
   return `f-${name}`;
+}
+
+function sliderId(name) {
+  return `f-${name}-slider`;
+}
+
+function labelId(name) {
+  return `l-${name}`;
 }
 
 function hintId(name) {
@@ -160,6 +211,11 @@ function valueFor(name) {
 function valueOf(name) {
   const node = document.getElementById(fieldId(name));
   return node ? node.value : valueFor(name);
+}
+
+/** The min and max `/api/options` advertises for one numeric field. */
+function limitsOf(config) {
+  return options.limits[config.limit];
 }
 
 /** The `<option>` list one select shows, every entry from the options response. */
@@ -225,13 +281,13 @@ function buildControl(name) {
     }
   } else {
     control = document.createElement("input");
-    if (config.kind === "number") {
-      control.type = "number";
-      control.min = options.limits[config.limit].min;
-      control.max = options.limits[config.limit].max;
-      control.step = config.step;
-    } else {
+    if (config.kind === "color") {
       control.type = "color";
+    } else {
+      control.type = "number";
+      control.min = limitsOf(config).min;
+      control.max = limitsOf(config).max;
+      control.step = config.step;
     }
   }
   control.id = fieldId(name);
@@ -241,9 +297,50 @@ function buildControl(name) {
 }
 
 /**
- * One labelled control: `<label>`, the control, and the persistent helper text that states
- * the limit (modern-web-guidance `forms`: keep constraints visible, not placeholder-only).
- * `groupHintId` adds a row-level hint without replacing the field's own.
+ * The range beside a `kind: "slider"` field. It is named by the field's own visible label and
+ * can only land on a value inside the advertised limits, so it never needs to report an error;
+ * the number box next to it carries the submitted value and the browser's validation.
+ */
+function buildSlider(name, config) {
+  const slider = document.createElement("input");
+  slider.type = "range";
+  slider.id = sliderId(name);
+  slider.min = limitsOf(config).min;
+  slider.max = limitsOf(config).max;
+  slider.step = config.step;
+  slider.value = valueFor(name);
+  slider.setAttribute("aria-labelledby", labelId(name));
+  return slider;
+}
+
+/** Write the value, in the field's own unit, where a screen reader can find it. */
+function paintSlider(slider, config) {
+  const say = config.unit ? UNIT_FORMATTERS[config.unit] : null;
+  if (say) {
+    slider.setAttribute("aria-valuetext", say(slider.valueAsNumber));
+  }
+}
+
+/** Bring every slider back to the number box beside it, after a build or a restore. */
+function syncSliders() {
+  for (const [name, config] of Object.entries(CONTROLS)) {
+    if (config.kind !== "slider") {
+      continue;
+    }
+    const box = document.getElementById(fieldId(name));
+    const slider = document.getElementById(sliderId(name));
+    if (!Number.isNaN(box.valueAsNumber)) {
+      slider.value = box.value;
+    }
+    paintSlider(slider, config);
+  }
+}
+
+/**
+ * One labelled control: `<label>`, the control (or the slider and number pair), and the
+ * persistent helper text that states the limit (modern-web-guidance `forms`: keep constraints
+ * visible, not placeholder-only). `groupHintId` adds a row-level hint without replacing the
+ * field's own.
  */
 function buildField(name, groupHintId) {
   const config = CONTROLS[name];
@@ -251,6 +348,7 @@ function buildField(name, groupHintId) {
   wrap.className = "field";
 
   const label = document.createElement("label");
+  label.id = labelId(name);
   label.htmlFor = fieldId(name);
   label.textContent = t(`field.${name}.label`);
 
@@ -263,7 +361,30 @@ function buildField(name, groupHintId) {
     control.setAttribute("aria-describedby", describedBy);
   }
 
-  wrap.append(label, control);
+  wrap.append(label);
+  if (config.kind === "slider") {
+    const slider = buildSlider(name, config);
+    if (describedBy) {
+      slider.setAttribute("aria-describedby", describedBy);
+    }
+    slider.addEventListener("input", () => {
+      control.value = slider.value;
+      paintSlider(slider, config);
+    });
+    control.addEventListener("input", () => {
+      if (!Number.isNaN(control.valueAsNumber)) {
+        slider.value = control.value;
+      }
+      paintSlider(slider, config);
+    });
+    paintSlider(slider, config);
+    const pair = document.createElement("div");
+    pair.className = "pair";
+    pair.append(slider, control);
+    wrap.append(pair);
+  } else {
+    wrap.append(control);
+  }
   if (ownHint) {
     wrap.append(ownHint);
   }
@@ -309,8 +430,6 @@ function buildForm() {
   document
     .getElementById(fieldId("quality"))
     .addEventListener("change", sizePlayer);
-  paintPreview();
-  sizePlayer();
 }
 
 /**
@@ -354,47 +473,192 @@ function currentParams() {
   return params;
 }
 
+/** What one button sends: `hd` fixes the quality, `generate` keeps the form's. */
+function paramsFor(action) {
+  const params = currentParams();
+  return action === "hd" ? { ...params, quality: HD_QUALITY } : params;
+}
+
+function settingsKey() {
+  return `${options.app.slug}.${SETTINGS_SUFFIX}`;
+}
+
+/** Remember the settings that were just accepted (SPEC.md section 8). Saving happens after the
+ *  backend has validated the request, so only a set of values that can render comes back. */
+function saveSettings() {
+  try {
+    localStorage.setItem(settingsKey(), JSON.stringify(currentParams()));
+  } catch {
+    // Storage the browser refuses, for instance in a private window, only costs the memory.
+  }
+}
+
+/** The stored document, or `null`. What is in local storage is not trusted: another program,
+ *  an older version, or an edited file can put anything there. */
+function storedParams() {
+  let text = null;
+  try {
+    text = localStorage.getItem(settingsKey());
+  } catch {
+    return null;
+  }
+  if (!text) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The value one control may hold, or `null` to leave the default in place. Every rule is the
+ *  one `/api/options` advertises, so the limits still live in `models.py` alone. */
+function allowedValue(name, value) {
+  const config = CONTROLS[name];
+  if (config.kind === "select") {
+    const known = choicesFor(name).some(
+      (choice) => choice.value === value && choice.available !== false,
+    );
+    return known ? value : null;
+  }
+  if (config.kind === "textarea") {
+    const limits = options.limits.text;
+    const usable =
+      typeof value === "string" &&
+      value.trim() !== "" &&
+      value.length <= limits.max_chars &&
+      value.split("\n").length <= limits.max_lines &&
+      !/[\x00-\x09\x0b-\x1f\x7f]/.test(value);
+    return usable ? value : null;
+  }
+  if (config.kind === "color") {
+    const pattern = new RegExp(options.hex_color_pattern);
+    return typeof value === "string" && pattern.test(value) ? value : null;
+  }
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+  const range = limitsOf(config);
+  if (value < range.min || value > range.max) {
+    return null;
+  }
+  if (config.integer && !Number.isInteger(value)) {
+    return null;
+  }
+  return String(value);
+}
+
+/** Put the remembered settings back into the form, field by field, keeping the advertised
+ *  default wherever the stored value no longer fits. */
+function restoreSettings() {
+  const stored = storedParams();
+  if (stored === null) {
+    return;
+  }
+  for (const name of Object.keys(CONTROLS)) {
+    const value =
+      name === "background_type"
+        ? stored.background?.type
+        : name === "background_color"
+          ? stored.background?.color
+          : stored[name];
+    const usable = allowedValue(name, value);
+    if (usable !== null) {
+      document.getElementById(fieldId(name)).value = usable;
+    }
+  }
+}
+
 function setStatus(text) {
   view.status.textContent = text;
 }
 
 function setBusy(busy) {
   view.generate.disabled = busy;
+  view.download.disabled = busy;
+  view.cancel.hidden = !busy;
   view.busy.hidden = !busy;
 }
 
-function showError(api) {
+/** Stop waiting for the render in flight and let the user work again. The job is not touched:
+ *  its video still lands in the cache, so asking for the same settings again is served from
+ *  there (SPEC.md sections 6 and 8). */
+function cancelRender() {
+  runToken += 1;
+  setBusy(false);
+  hideError();
+  setStatus(t("status.cancelled"));
+}
+
+/** The status sentence for one job of one action. An HD render is slower and says so. */
+function statusKey(action, jobStatus) {
+  const waiting = jobStatus === "queued" || jobStatus === "running";
+  return action === "hd" && waiting
+    ? `status.hd_${jobStatus}`
+    : `status.${jobStatus}`;
+}
+
+/**
+ * Show the sentence for one SPEC.md section 6 error object. `action` names the button `Try
+ * again` presses; an error nothing can retry, such as a backend that never answered at
+ * start-up, hides that button rather than promising a retry it cannot make.
+ */
+function showError(api, action = null) {
   setStatus(t("status.failed"));
   view.errorText.textContent = errorText(api);
+  lastAction = action;
+  view.retry.hidden = action === null;
   view.error.hidden = false;
 }
 
 function hideError() {
   view.error.hidden = true;
   view.errorText.textContent = "";
+  lastAction = null;
 }
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Poll one job until it is final; a request that passed validation always has a job id, so
- *  this is the only path from Generate to a video (SPEC.md section 6). */
-async function waitForJob(jobId) {
+/** Poll one job until it is final, or until the token is retired by Cancel, which answers
+ *  `null`. A request that passed validation always has a job id, so this is the only path from
+ *  either button to a video (SPEC.md section 6). */
+async function waitForJob(jobId, token, action) {
   for (;;) {
+    if (token !== runToken) {
+      return null;
+    }
     const job = await requestJson(ENDPOINTS.job + encodeURIComponent(jobId));
+    if (token !== runToken) {
+      return null;
+    }
     if (FINAL_STATUSES.has(job.status)) {
       return job;
     }
-    setStatus(t(`status.${job.status}`));
+    setStatus(t(statusKey(action, job.status)));
     await sleep(POLL_MS);
   }
 }
 
+/** Only the path this app's own video endpoint serves may become a player source or the
+ *  target of a download link, so a URL from anywhere else is never used as one. */
+function videoSource(url) {
+  return typeof url === "string" && url.startsWith(ENDPOINTS.video)
+    ? url
+    : null;
+}
+
 async function showVideo(url) {
+  const source = videoSource(url);
+  if (source === null) {
+    return false;
+  }
   view.playerEmpty.hidden = true;
   view.player.hidden = false;
-  view.player.src = url;
+  view.player.src = source;
   setStatus(t("status.done"));
   try {
     await view.player.play();
@@ -402,31 +666,84 @@ async function showVideo(url) {
     // A browser that will not start a video by itself still leaves the player ready to use.
     setStatus(t("status.press_play"));
   }
+  return true;
 }
 
-async function generate() {
+/**
+ * Ask the browser to save the finished HD file. The endpoint already answers `?download=1`
+ * with `Content-Disposition: attachment` (SPEC.md section 6); the link repeats that name so
+ * the save still happens if the header is lost, and a clicked link keeps the page, the form
+ * and whatever the player holds exactly where they are.
+ */
+function saveVideoFile(url) {
+  const source = videoSource(url);
+  if (source === null) {
+    return false;
+  }
+  setStatus(t("status.saving"));
+  const link = document.createElement("a");
+  link.href = source + DOWNLOAD_QUERY;
+  link.download = source.slice(ENDPOINTS.video.length);
+  document.body.append(link);
+  link.click();
+  link.remove();
+  return true;
+}
+
+/**
+ * One render request, start to finish. `generate` plays the result in the page, `hd` saves it
+ * to the user's machine; both share the request, the polling and the error line, so there is
+ * one path through a render for the user and for the tests.
+ */
+async function startRender(action) {
+  const token = ++runToken;
   hideError();
   setBusy(true);
-  setStatus(t("status.queued"));
+  setStatus(t(statusKey(action, "queued")));
   try {
     const accepted = await requestJson(ENDPOINTS.render, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(currentParams()),
+      body: JSON.stringify(paramsFor(action)),
     });
-    if (accepted.cached) {
+    if (token !== runToken) {
+      return;
+    }
+    saveSettings();
+    if (accepted.cached && action !== "hd") {
       setStatus(t("status.cached"));
     }
-    const job = await waitForJob(accepted.job_id);
-    if (job.status === "done") {
-      await showVideo(job.video_url);
-    } else {
-      showError(job.error);
+    const job = await waitForJob(accepted.job_id, token, action);
+    if (job === null) {
+      return;
+    }
+    if (job.status !== "done") {
+      showError(job.error, action);
+      return;
+    }
+    const shown =
+      action === "hd"
+        ? saveVideoFile(job.video_url)
+        : await showVideo(job.video_url);
+    if (!shown) {
+      showError({ code: "video_not_found", params: {} }, action);
     }
   } catch (failure) {
-    showError(failure.api ?? { code: "unexpected", params: {} });
+    if (token !== runToken) {
+      return;
+    }
+    showError(failure.api ?? { code: "unexpected", params: {} }, action);
   } finally {
-    setBusy(false);
+    if (token === runToken) {
+      setBusy(false);
+    }
+  }
+}
+
+/** Press whichever button runs a render, but only after the browser has checked the form. */
+function requestRender(action) {
+  if (view.settings.reportValidity()) {
+    startRender(action);
   }
 }
 
@@ -452,6 +769,10 @@ async function boot() {
   view.appName.textContent = options.app.name;
   applyDocumentTitle(options.app.name);
   buildForm();
+  restoreSettings();
+  syncSliders();
+  paintPreview();
+  sizePlayer();
   setStatus(t("status.ready"));
   view.settings.hidden = false;
 
@@ -459,10 +780,11 @@ async function boot() {
   // `reportValidity` shows the complaint and moves focus to the first bad field.
   view.settings.addEventListener("submit", (event) => {
     event.preventDefault();
-    if (view.settings.reportValidity()) {
-      generate();
-    }
+    requestRender("generate");
   });
+  view.download.addEventListener("click", () => requestRender("hd"));
+  view.cancel.addEventListener("click", cancelRender);
+  view.retry.addEventListener("click", () => requestRender(lastAction));
 }
 
 boot();

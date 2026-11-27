@@ -24,6 +24,11 @@ export const DEFAULT_LOCALE = "en";
 let messages = {};
 let current = DEFAULT_LOCALE;
 let numbers = new Intl.NumberFormat(current);
+let durations = new Intl.NumberFormat(current, {
+  style: "unit",
+  unit: "second",
+  unitDisplay: "long",
+});
 
 /**
  * Fetch one locale file and make it the active one.
@@ -44,6 +49,11 @@ export async function loadLocale(locale) {
   messages = body;
   current = locale;
   numbers = new Intl.NumberFormat(locale);
+  durations = new Intl.NumberFormat(locale, {
+    style: "unit",
+    unit: "second",
+    unitDisplay: "long",
+  });
   document.documentElement.lang = locale;
   return locale;
 }
@@ -80,6 +90,16 @@ export function t(key, params) {
 /** Numbers and units go through `Intl` (SPEC.md section 8). */
 export function number(value) {
   return numbers.format(value);
+}
+
+/**
+ * A duration in the words this locale uses for it.
+ *
+ * `second` is an ICU unit, so the plural arrives with the number ("1 second", "2,5 detik")
+ * instead of being guessed here or repeated in both locale files.
+ */
+export function seconds(value) {
+  return durations.format(value);
 }
 
 /**

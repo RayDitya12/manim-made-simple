@@ -44,6 +44,12 @@ SCENE_PATH = Path(__file__).resolve().parents[1] / "scenes" / "text_scene.py"
 SCENE_CLASS = "MmsTextScene"
 OUTPUT_EXTENSION = "mp4"
 
+#: What the template produces, not what its source looks like. Bump this when a change
+#: to ``backend/scenes/text_scene.py`` would render a different video for identical
+#: parameters, so SPEC.md section 6 makes old cached files miss instead of being served
+#: for a render they did not produce. Comment-only edits need no bump.
+TEMPLATE_VERSION = "1"
+
 #: The executable Manim is launched from. ROADMAP 6.4 points this at the bundled
 #: Python runtime; during development it is the interpreter running the backend.
 MANIM_COMMAND: tuple[str, ...] = (sys.executable, "-m", "manim")
@@ -284,6 +290,7 @@ __all__ = [
     "RenderParamsError",
     "SCENE_CLASS",
     "SCENE_PATH",
+    "TEMPLATE_VERSION",
     "QualityPreset",
     "build_manim_command",
     "render_video",

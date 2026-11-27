@@ -14,6 +14,10 @@ Two schema fields are validated but not acted on here:
   or ``null`` font still means the system default face, which only hand-written
   parameter files can ask for.
 
+Changing what this file renders for identical parameters also means bumping
+``TEMPLATE_VERSION`` in ``backend/app/render.py``: that version is part of the cache key,
+so the clips cached under the old look stop being served (SPEC.md section 6).
+
 Run it by hand with a hand-written parameters file::
 
     MTS_PARAMS=params.json manim render -r 854,480 --fps 15 text_scene.py MmsTextScene

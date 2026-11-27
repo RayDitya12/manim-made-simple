@@ -111,18 +111,22 @@ All endpoints are under `/api`, bound to `127.0.0.1` only.
 | `GET /api/health` | Self-check | `{status, python_version, manim_version, ffmpeg_version, ffmpeg_source, error}` |
 | `GET /api/options` | Allowed values and limits | fonts, animations, limits, defaults |
 | `POST /api/render` | Start a render job | `202 {job_id, cached}` |
-| `GET /api/jobs/{job_id}` | Poll status | `{status: queued\|running\|done\|failed, video_url?, error?}` |
+| `GET /api/jobs/{job_id}` | Poll status | `{job_id, status: queued\|running\|done\|failed, video_url, error}`; unused keys are `null` |
 | `GET /api/videos/{name}` | Serve a rendered file | video bytes; `?download=1` sets `Content-Disposition: attachment` |
 
 Behavior:
 
 - `GET /api/health` names the interpreter, Manim, and FFmpeg versions actually in use. `ffmpeg_source` is `cli` or `pyav`: Manim CE encodes through PyAV, so a missing `ffmpeg` binary is a warning, not a failure. When the machine cannot render, `status` is `degraded`, the missing version is `null`, and `error` holds a stable `code` (`manim_missing`, `ffmpeg_missing`) with an English `message` the UI can fall back to.
 - Jobs run on a single in-process worker (one render at a time, FIFO). No Redis, no Celery.
-- **Cache key** = SHA-256 of canonical JSON (sorted keys) of validated params + app version + Manim version + template version. Same key means serve the existing file and return `cached: true`.
-- Video file names are `<sha256>-<quality>.<ext>`. The video endpoint must validate `name` against a strict regex and resolve inside the output directory only (no path traversal).
-- Output directory: a per-user data directory (`MTS_DATA_DIR` env var; Electron sets it to `app.getPath('userData')`). Add a "Clear cache" action; also delete files older than 7 days on startup.
+- A request that passes validation always answers with a `job_id`, so the UI has one polling path. When the video is already in the cache, the job is created in state `done` and nothing is queued. An empty body `{}` is a valid request: every field in section 5 has a default.
+- A request that duplicates a render already queued or running creates a second job. The worker re-checks the cache immediately before it starts Manim, so the second job finishes without a second render.
+- Stopping the queue (app quit) does not interrupt a render in progress; killing the child process is the Electron shell's job (section 10, task 6.1). Jobs not yet started stay `queued`.
+- **Cache key** = SHA-256 of canonical JSON (sorted keys) of validated params + app version + Manim version + template version. Same key means serve the existing file and return `cached: true`. When the Manim version cannot be determined, the request is refused with `503 {code: manim_missing}` rather than keyed on a guess.
+- Video file names are `<sha256>-<quality>.<ext>`. The video endpoint must validate `name` against a strict regex and resolve inside the output directory only (no path traversal). `GET /api/jobs/{job_id}` validates `job_id` against the generator's own shape (`^[0-9a-f]{32}$`) before any lookup, and an unknown or malformed id is `404 {code: job_not_found}`.
+- Output directory: a per-user data directory (`MTS_DATA_DIR` env var; Electron sets it to `app.getPath('userData')`). The terminal workflow leaves it unset, which resolves to `%LOCALAPPDATA%\<app>` on Windows, `~/.local/share/<app>` on Linux (`$XDG_DATA_HOME` when set), `~/Library/Application Support/<app>` on macOS; rendered videos live in a `videos/` folder inside it. Add a "Clear cache" action; also delete files older than 7 days on startup.
 - Render timeout: 120 s for `hd`, 60 s for `preview`. On timeout, kill the process tree and return a friendly error.
-- Errors returned by the API have a stable `code` (for example `text_too_long`, `render_timeout`), a short English `message`, and optional `params`. The UI shows the translation of the `code` from the locale files and falls back to `message`. Full technical details go to a log file, never to the UI.
+- Errors returned by the API have a stable `code` (for example `text_too_long`, `render_timeout`, `params_not_json` for a body that is not JSON, `job_not_found`), a short English `message`, and optional `params`. The UI shows the translation of the `code` from the locale files and falls back to `message`. Full technical details go to a log file, never to the UI.
+- `GET /api/jobs/{job_id}` always returns the same four keys (`job_id`, `status`, `video_url`, `error`), with `null` where a value does not apply yet, so the UI never has to distinguish "absent" from "not ready".
 
 ## 7. Rendering
 

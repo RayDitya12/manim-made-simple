@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Manim Made Simple</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <header class="masthead">
+      <h1 id="app-name"></h1>
+      <p class="tagline" data-i18n="app.tagline"></p>
+    </header>
+
+    <main class="layout">
+      <section class="pane pane--settings" aria-labelledby="settings-heading">
+        <h2 id="settings-heading" data-i18n="settings.heading"></h2>
+
+        <p id="job-status" class="status" role="status"></p>
+
+        <form id="settings" method="post" action="/api/render" hidden>
+          <div id="fields" class="fields"></div>
+
+          <div class="actions">
+            <button
+              id="generate"
+              type="submit"
+              data-i18n="action.generate"
+            ></button>
+            <progress
+              id="busy"
+              class="busy"
+              aria-labelledby="job-status"
+              hidden
+            ></progress>
+          </div>
+
+          <div id="job-error" class="callout" role="alert" hidden>
+            <p id="job-error-text"></p>
+          </div>
+        </form>
+      </section>
+
+      <section class="pane pane--output" aria-labelledby="output-heading">
+        <h2 id="output-heading" data-i18n="output.heading"></h2>
+        <p id="player-empty" class="placeholder" data-i18n="player.empty"></p>
+        <!-- The accessible name is the visible heading of this pane. -->
+        <video
+          id="player"
+          controls
+          aria-labelledby="output-heading"
+          width="854"
+          height="480"
+          hidden
+        ></video>
+      </section>
+    </main>
+  </body>
+</html>

@@ -23,6 +23,10 @@ Endpoints so far:
     Streams one file out of the render cache (ROADMAP 2.4). The name has to be one this app
     produced, and ``?download=1`` asks for it as an attachment instead of inline.
 
+The ``/api`` routes above are the whole API. Alongside them the app also serves the
+interface itself (ROADMAP 3.1, :mod:`backend.app.webui`), so stage one of SPEC.md section 4
+is a single command and one browser tab.
+
 FFmpeg follows the rule established by ``scripts/check_env.py``: a missing
 ``ffmpeg`` command line binary is a warning, not a failure, because Manim CE 0.22.1
 encodes through PyAV, whose wheel bundles the FFmpeg libraries. The versions come
@@ -47,7 +51,7 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 
-from backend.app import app_meta, cache, data_dir, jobs, security, videos
+from backend.app import app_meta, cache, data_dir, jobs, security, videos, webui
 from backend.app.models import (
     ANIMATIONS,
     FONTS,
@@ -238,6 +242,7 @@ def create_app(job_queue: jobs.JobQueue | None = None) -> FastAPI:
     )
     app.state.jobs = render_queue
     security.install(app)
+    webui.install(app)
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
@@ -332,6 +337,7 @@ def main() -> int:
     port = 8000
     cache_dir = data_dir.describe()
     print(f"{app_meta.app_name()} backend on http://{host}:{port} (Ctrl+C to stop)")
+    print(f"interface: http://{host}:{port}/")
     print(f"render cache: {cache_dir['video_dir']} (from {cache_dir['source']})")
     uvicorn.run(app, host=host, port=port, log_level="warning")
     return 0

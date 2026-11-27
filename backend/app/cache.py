@@ -118,6 +118,15 @@ def cache_key(
     return hashlib.sha256(canonical_json(document).encode("utf-8")).hexdigest()
 
 
+def video_stem(key: str, quality: str) -> str:
+    """``<sha256>-<quality>``, the name of a cached video without its extension.
+
+    :func:`backend.app.render.render_video` takes a stem rather than a file name, so the
+    job queue uses this to ask Manim for exactly the file the key describes.
+    """
+    return f"{key}-{quality}"
+
+
 def video_file_name(key: str, quality: str) -> str:
     """Return ``<sha256>-<quality>.<ext>``, the only name a cached video may have."""
     if not KEY_PATTERN.fullmatch(key):
@@ -132,7 +141,7 @@ def video_file_name(key: str, quality: str) -> str:
             f"quality must be one of {', '.join(QUALITY_IDS)}.",
             {"field": "quality", "allowed": list(QUALITY_IDS)},
         )
-    return f"{key}-{quality}.{OUTPUT_EXTENSION}"
+    return f"{video_stem(key, quality)}.{OUTPUT_EXTENSION}"
 
 
 def video_path(output_dir: Path, key: str, quality: str) -> Path:
@@ -144,6 +153,15 @@ def video_path(output_dir: Path, key: str, quality: str) -> Path:
         # Unreachable with the pattern above, kept as the seam the 2.4 endpoint relies on.
         raise CacheError("cache_path_outside_output_dir", "the video path escapes the cache.")
     return candidate
+
+
+def is_cached(path: Path) -> bool:
+    """Is ``path`` a usable cached video?
+
+    An empty file does not count: a render killed part-way can leave one behind, and
+    serving it would show the user a broken video instead of a fresh render.
+    """
+    return path.is_file() and path.stat().st_size > 0
 
 
 def find_cached(
@@ -158,9 +176,6 @@ def find_cached(
     only when a caller renders one parameter set at another quality, and a mismatch is
     refused instead of guessed: ``quality`` is part of the key, so pairing one quality's
     key with another quality's file name would create a path that cannot be reproduced.
-
-    An empty file does not count as a hit: a render killed part-way can leave one
-    behind, and serving it would show the user a broken video instead of a fresh render.
     """
     validated = params if isinstance(params, RenderParams) else parse_params(dict(params))
     if quality is None:
@@ -172,9 +187,7 @@ def find_cached(
             {"requested": quality, "params": validated.quality},
         )
     path = video_path(output_dir, cache_key(validated, **key_kwargs), quality)
-    if path.is_file() and path.stat().st_size > 0:
-        return path
-    return None
+    return path if is_cached(path) else None
 
 
 def cleanup_stale_videos(
@@ -228,6 +241,8 @@ __all__ = [
     "cleanup_stale_videos",
     "find_cached",
     "installed_manim_version",
+    "is_cached",
     "video_file_name",
     "video_path",
+    "video_stem",
 ]

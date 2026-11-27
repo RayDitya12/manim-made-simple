@@ -657,6 +657,175 @@ def test_the_new_actions_are_worded_differently_in_indonesian(key: str, locales:
     assert locales["id"][key] != locales["en"][key]
 
 
+# --------------------------------------------------------------- accessibility (3.3)
+
+
+#: Foreground and background that carry text the user has to read, in either scheme.
+#: `accent` on `canvas` and `panel` is the quieter button's label; `accent-ink` on `accent` is
+#: Generate's; `danger` on `danger-bg` is the mark beside an error.
+TEXT_PAIRS = (
+    ("ink", "canvas"),
+    ("ink", "panel"),
+    ("ink-muted", "canvas"),
+    ("ink-muted", "panel"),
+    ("accent", "canvas"),
+    ("accent", "panel"),
+    ("accent-ink", "accent"),
+    ("ink", "danger-bg"),
+    ("danger", "danger-bg"),
+)
+
+
+def style_source() -> str:
+    return (REPO_ROOT / "ui" / "styles.css").read_text(encoding="utf-8")
+
+
+def scheme_tokens(*, dark: bool) -> dict[str, str]:
+    """The color custom properties of one scheme, read from the stylesheet itself.
+
+    Enforcing the ratio against the file rather than a list copied into the test is what makes
+    this useful after the design pass: a token changed in ``styles.css`` is measured again.
+    """
+    css = style_source()
+    block = (
+        css.split("@media (prefers-color-scheme: dark)", 1)[1]
+        if dark
+        else css.split(":root {", 1)[1]
+    )
+    return dict(re.findall(r"--([\w-]+):\s*(#[0-9a-fA-F]{6})", block.split("}", 1)[0]))
+
+
+def _channel(hex_pair: str) -> float:
+    value = int(hex_pair, 16) / 255
+    return value / 12.92 if value <= 0.03928 else ((value + 0.055) / 1.055) ** 2.4
+
+
+def contrast(first: str, second: str) -> float:
+    """The WCAG 2.x contrast ratio of two ``#RRGGBB`` colors."""
+    luminances = []
+    for color in (first, second):
+        red, green, blue = (_channel(color[start : start + 2]) for start in (1, 3, 5))
+        luminances.append(0.2126 * red + 0.7152 * green + 0.0722 * blue)
+    lighter, darker = max(luminances), min(luminances)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+@pytest.mark.parametrize("dark", [False, True], ids=["light", "dark"])
+@pytest.mark.parametrize("front,back", TEXT_PAIRS)
+def test_every_text_color_pair_passes_wcag_aa(front: str, back: str, dark: bool) -> None:
+    """1.4.3 asks 4.5:1 for text this small, and every pair below carries real words."""
+    tokens = scheme_tokens(dark=dark)
+    ratio = contrast(tokens[front], tokens[back])
+    assert ratio >= 4.5, f"{front} on {back} is {ratio:.2f}:1"
+
+
+@pytest.mark.parametrize("dark", [False, True], ids=["light", "dark"])
+def test_the_focus_ring_is_visible_against_both_backgrounds(dark: bool) -> None:
+    """The outline is the only thing that says where the keyboard is, so it is a non-text
+    indicator and needs 3:1 against what it sits on (WCAG 1.4.11)."""
+    tokens = scheme_tokens(dark=dark)
+    for background in ("canvas", "panel"):
+        ratio = contrast(tokens["accent"], tokens[background])
+        assert ratio >= 3.0, f"against {background}: {ratio:.2f}:1"
+
+
+@pytest.mark.parametrize("dark", [False, True], ids=["light", "dark"])
+def test_the_edge_of_an_operable_control_is_visible(dark: bool) -> None:
+    """`--boundary` draws the edge of every field, button and the player. WCAG 1.4.11 asks 3:1
+    for the boundary of a user interface component, so the token is measured rather than
+    eyeballed, and `--line` is left for the card edges that hold no control."""
+    tokens = scheme_tokens(dark=dark)
+    for background in ("canvas", "panel"):
+        ratio = contrast(tokens["boundary"], tokens[background])
+        assert ratio >= 3.0, f"against {background}: {ratio:.2f}:1"
+
+
+def test_the_keyboard_position_is_always_shown() -> None:
+    """`:focus-visible` draws the ring only for keyboard interaction, and nothing in the
+    stylesheet is allowed to take it away again."""
+    css = style_source()
+    rule = re.search(r":focus-visible \{([^}]*)\}", css)
+    assert rule is not None
+    width = re.search(r"outline: (\d+)px solid var\(--accent\)", rule.group(1))
+    assert width is not None and int(width.group(1)) >= 2
+    assert "outline-offset:" in rule.group(1)
+    assert not re.search(r"outline:\s*(?:none|0)\s*[;!]", css)
+
+
+def test_reduced_motion_stops_the_movement_the_page_adds() -> None:
+    """Not only the durations: a repeating animation has to stop repeating, and scrolling has
+    to stop sliding (modern-web-guidance `prefers-reduced-motion`)."""
+    css = style_source()
+    block = re.search(r"@media \(prefers-reduced-motion: reduce\) \{(.*?)\n\}", css, flags=re.S)
+    assert block is not None
+    for declaration in (
+        "transition-duration",
+        "animation-duration",
+        "animation-iteration-count",
+        "scroll-behavior",
+    ):
+        assert declaration in block.group(1), declaration
+
+
+def test_a_finished_video_does_not_start_moving_by_itself_when_motion_is_reduced() -> None:
+    """The stylesheet cannot reach the player, and a clip filling the pane is the largest
+    movement on the screen, so the same query decides whether it autoplays (SPEC.md section 8)."""
+    source = app_source()
+    assert 'const REDUCED_MOTION = "(prefers-reduced-motion: reduce)";' in source
+    shown = source.split("async function showVideo(url) {", 1)[1].split("\n}", 1)[0]
+    assert "window.matchMedia(REDUCED_MOTION).matches" in shown
+    assert 'setStatus(t("status.press_play"));' in shown
+    assert "await view.player.play();" in shown  # the ordinary path still plays inline
+
+
+def test_focus_stays_in_the_actions_row_while_a_job_runs() -> None:
+    """SPEC.md section 8 disables Generate during a render, and a disabled button drops focus to
+    the top of the page. The row hands the caret to the control that replaced it and takes it
+    back when it is idle, but never from somewhere the user has already moved to."""
+    source = app_source()
+    busy = source.split("function setBusy(busy) {", 1)[1].split("\n}", 1)[0]
+    assert "const next = busy ? view.cancel : view.generate;" in busy
+    assert "next.focus();" in busy
+    assert "view.settings.contains(active)" in busy
+
+
+def test_the_page_follows_the_system_color_scheme() -> None:
+    """SPEC.md section 8: respect `prefers-color-scheme`. Both schemes must define the same
+    tokens, or one of them renders with a property left over from the other."""
+    css = style_source()
+    assert "color-scheme: light dark;" in css
+    assert len(scheme_tokens(dark=False)) == len(scheme_tokens(dark=True)) >= len(TEXT_PAIRS)
+
+
+@pytest.mark.parametrize(("element", "live"), [("job-status", "status"), ("job-error", "alert")])
+def test_the_line_that_changes_says_that_it_changes(element: str, live: str, html: str) -> None:
+    """The status and the error are the only feedback for a job a user cannot see running."""
+    tag = re.search(rf"<[a-z]+[^>]*id=\"{element}\"[^>]*>", html, flags=re.S)
+    assert tag is not None, element
+    assert f'role="{live}"' in tag.group(0)
+
+
+@pytest.mark.parametrize(
+    ("element", "heading"), [("player", "output-heading"), ("busy", "job-status")]
+)
+def test_a_control_with_no_text_of_its_own_is_named_by_one_that_has(
+    element: str, heading: str, html: str
+) -> None:
+    """A video and a progress bar hold no words, so their accessible name comes from the text
+    already on the screen beside them."""
+    tag = re.search(rf"<(?:video|progress)[^>]*id=\"{element}\"[^>]*>", html, flags=re.S)
+    assert tag is not None, element
+    assert f'aria-labelledby="{heading}"' in tag.group(0)
+
+
+def test_every_built_control_is_labelled_by_a_real_label_element() -> None:
+    """`<label for>` rather than an invented `aria-label`, so the name a screen reader says is
+    the name the user can see and click (WCAG 1.3.1, 3.3.2)."""
+    source = app_source()
+    assert "label.htmlFor = fieldId(name);" in source
+    assert "wrap.append(label)" in source
+
+
 # ------------------------------------------------------------------ served contract
 
 

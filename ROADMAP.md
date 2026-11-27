@@ -43,7 +43,7 @@ Build in this order. Each task is one pull request unless noted. Tick the checkb
   Acceptance: from a browser, change text and color, press Generate, see the video play. Screenshot attached.
 - [x] **3.2 Full controls**: duration sliders, font dropdown, three color pickers, outline width, Download HD, cancel, friendly errors, settings remembered in `localStorage`.
   Acceptance: manual walkthrough of every control with screenshots; error state shown by stopping the backend.
-- [ ] **3.3 Accessibility pass**: keyboard use, focus, labels, contrast, reduced motion.
+- [x] **3.3 Accessibility pass**: keyboard use, focus, labels, contrast, reduced motion.
   Acceptance: checklist in the PR; keyboard-only run-through described.
 - [ ] **3.4 Design pass** with the `heydamir/unslop` skill (UI only, SPEC.md section 8 still fully satisfied). Owner approves the direction first.
   Acceptance: before/after screenshots; all controls still work.

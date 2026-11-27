@@ -53,6 +53,14 @@ const POLL_MS = 400;
 const FINAL_STATUSES = new Set(["done", "failed"]);
 
 /**
+ * The media query the stylesheet already obeys. The same answer decides whether a finished
+ * video starts by itself: a person who asked the system to reduce motion is not asking for a
+ * clip to start moving in front of them, and `status.press_play` already tells them to press
+ * play (SPEC.md section 8).
+ */
+const REDUCED_MOTION = "(prefers-reduced-motion: reduce)";
+
+/**
  * How a slider's value is spoken. A range announces a bare number, which is no answer for a
  * duration, so a field that has a unit names one through `aria-valuetext`. The words come from
  * `Intl`, which owns the plural and the decimal separator with it (SPEC.md section 8), so they
@@ -575,11 +583,22 @@ function setStatus(text) {
   view.status.textContent = text;
 }
 
+/**
+ * Both render buttons are disabled while a job runs (SPEC.md section 8), and a disabled button
+ * takes focus out of the page, so the keyboard user's next Tab starts again at the heading.
+ * Hand the caret to the control that replaced them and take it back when the row is idle,
+ * without ever pulling it away from somewhere the user has already moved to.
+ */
 function setBusy(busy) {
   view.generate.disabled = busy;
   view.download.disabled = busy;
   view.cancel.hidden = !busy;
   view.busy.hidden = !busy;
+  const next = busy ? view.cancel : view.generate;
+  const active = document.activeElement;
+  if (active === document.body || view.settings.contains(active)) {
+    next.focus();
+  }
 }
 
 /** Stop waiting for the render in flight and let the user work again. The job is not touched:
@@ -660,6 +679,10 @@ async function showVideo(url) {
   view.player.hidden = false;
   view.player.src = source;
   setStatus(t("status.done"));
+  if (window.matchMedia(REDUCED_MOTION).matches) {
+    setStatus(t("status.press_play"));
+    return true;
+  }
   try {
     await view.player.play();
   } catch {

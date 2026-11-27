@@ -19,6 +19,10 @@ Endpoints so far:
     Reports ``queued | running | done | failed``, the ``video_url`` when the file exists,
     and the stable error code when the render failed.
 
+``GET /api/videos/{name}``
+    Streams one file out of the render cache (ROADMAP 2.4). The name has to be one this app
+    produced, and ``?download=1`` asks for it as an attachment instead of inline.
+
 FFmpeg follows the rule established by ``scripts/check_env.py``: a missing
 ``ffmpeg`` command line binary is a warning, not a failure, because Manim CE 0.22.1
 encodes through PyAV, whose wheel bundles the FFmpeg libraries. The versions come
@@ -26,8 +30,8 @@ from the installed packages at request time rather than from the lockfile, so a
 report that names a version is a report about the interpreter that is really running.
 
 The app owns one :class:`~backend.app.jobs.JobQueue`, whose cache lives in the data
-directory of :mod:`backend.app.data_dir`. The video endpoint (2.4) and the host/CORS
-hardening (2.5) are deliberately not here yet.
+directory of :mod:`backend.app.data_dir`. File serving is
+:mod:`backend.app.videos`; the host/CORS hardening (2.5) is deliberately not here yet.
 """
 
 from __future__ import annotations
@@ -40,9 +44,9 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
-from backend.app import app_meta, cache, data_dir, jobs
+from backend.app import app_meta, cache, data_dir, jobs, videos
 from backend.app.models import (
     ANIMATIONS,
     FONTS,
@@ -276,6 +280,36 @@ def create_app(job_queue: jobs.JobQueue | None = None) -> FastAPI:
         if payload is None:
             return _error_response(404, "job_not_found", "no render job has this id.")
         return JSONResponse(status_code=200, content=payload)
+
+    @app.api_route("/api/videos/{name}", methods=["GET", "HEAD"])
+    def video_file(name: str, download: str | None = None) -> Response:
+        """Stream one cached video (SPEC.md section 6).
+
+        :func:`backend.app.videos.serve` rebuilds the path from the pieces of a name it
+        matched completely, so this handler never receives a path derived from the request,
+        and an unusable name comes back as a stable error code. ``HEAD`` is listed because
+        a file endpoint that answers ``GET`` has to (RFC 9110 section 9.3.2), and
+        ``FileResponse`` already sends the headers without the body.
+        """
+        try:
+            return videos.serve(
+                render_queue.output_dir,
+                name,
+                download=download == videos.DOWNLOAD_QUERY_VALUE,
+            )
+        except (videos.VideoError, cache.CacheError) as exc:
+            return _error_response(videos.ERROR_STATUS.get(exc.code, 500), exc.code, exc.message)
+
+    @app.api_route("/api/videos/{requested_path:path}", methods=["GET", "HEAD"])
+    def video_name_with_slashes(requested_path: str) -> JSONResponse:
+        """Answer a request that got this far with a name containing a slash.
+
+        ``{name}`` matches one path segment, so a traversal attempt arrives as a longer path
+        that route cannot match. Returning the SPEC.md section 6 error object here, rather
+        than leaving it to the framework's bare 404, keeps one shape for every API error and
+        makes the rejection testable. Nothing is resolved or stat'ed: the path is unread.
+        """
+        return _error_response(400, "video_name_invalid", videos.NAME_INVALID_MESSAGE)
 
     return app
 

@@ -163,6 +163,14 @@ def test_file_name_is_key_dash_quality_dash_extension() -> None:
     assert cache.VIDEO_NAME_PATTERN.fullmatch(cache.video_file_name(key, "hd"))
 
 
+def test_the_name_pattern_reads_a_file_name_back_apart() -> None:
+    """The video endpoint (ROADMAP 2.4) needs the groups, not only the yes or no."""
+    key = key_for()
+    parts = cache.VIDEO_NAME_PATTERN.fullmatch(cache.video_file_name(key, "hd"))
+    assert parts is not None
+    assert parts.groups() == (key, "hd")
+
+
 def test_the_stem_is_the_file_name_without_the_extension() -> None:
     """render_video is handed a stem, so the queue needs the two to agree."""
     key = key_for()

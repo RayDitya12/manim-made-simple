@@ -41,6 +41,10 @@ curl http://127.0.0.1:8000/api/health  # environment self-check
 curl http://127.0.0.1:8000/api/options # allowed values and limits for the form
 ```
 
+The same server also serves the interface: open `http://127.0.0.1:8000/` in a browser,
+fill in the form, and press **Generate preview**. The form is built from `/api/options`, so
+its choices and limits are exactly the ones this backend enforces.
+
 Render a video and poll the job:
 
 ```bash

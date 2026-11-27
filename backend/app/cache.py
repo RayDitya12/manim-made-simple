@@ -49,8 +49,11 @@ QUALITY_IDS = tuple(QUALITY_PRESETS)
 
 #: One cached video file name, used to recognise cache files without touching anything
 #: else that happens to live in the output directory (logs, downloaded updates, ...).
+#: The two groups are the key and the quality, so the video endpoint (ROADMAP 2.4) can read
+#: a name back into the arguments :func:`video_path` wants instead of parsing it by hand.
 VIDEO_NAME_PATTERN = re.compile(
-    rf"^[0-9a-f]{{{KEY_HEX_LENGTH}}}-({'|'.join(QUALITY_IDS)})\.{re.escape(OUTPUT_EXTENSION)}$"
+    rf"^([0-9a-f]{{{KEY_HEX_LENGTH}}})-({'|'.join(re.escape(q) for q in QUALITY_IDS)})"
+    rf"\.{re.escape(OUTPUT_EXTENSION)}$"
 )
 
 

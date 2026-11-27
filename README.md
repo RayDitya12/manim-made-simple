@@ -53,6 +53,19 @@ curl http://127.0.0.1:8000/api/jobs/76fd1a76...
 # {"job_id":"...","status":"done","video_url":"/api/videos/<sha256>-preview.mp4","error":null}
 ```
 
+Fetch the video the job reported:
+
+```bash
+curl -O http://127.0.0.1:8000/api/videos/<sha256>-preview.mp4   # streams, and answers Range
+curl -I "http://127.0.0.1:8000/api/videos/<sha256>-preview.mp4?download=1"
+# content-disposition: attachment; filename="<sha256>-preview.mp4"
+```
+
+Only names this app produced are servable: the name must be a 64-character cache key,
+one of the quality ids, and `.mp4`. Anything else (including `../` in any spelling) is
+rejected with `400 {"error":{"code":"video_name_invalid", ...}}` before the filesystem is
+touched.
+
 Rendered videos are cached in the per-user data directory and reused when the
 parameters match. `MTS_DATA_DIR` says where; without it the OS default is used
 (`%LOCALAPPDATA%\manim-made-simple` on Windows,

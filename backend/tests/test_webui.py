@@ -334,11 +334,13 @@ def test_the_scripts_only_name_endpoints_the_backend_serves(app: Any) -> None:
         '"/api/options"',
         '"/api/render"',
         '"/api/jobs/"',
+        '"/api/videos/"',
     } == literals
     routes = {getattr(route, "path", "") for route in app.routes}
     assert "/api/options" in routes
     assert "/api/render" in routes
     assert any(path.startswith("/api/jobs/") for path in routes)
+    assert any(path.startswith("/api/videos/") for path in routes)
 
 
 def test_the_scripts_only_fetch_files_the_backend_serves(app: Any) -> None:
@@ -450,6 +452,209 @@ def test_the_indonesian_copy_uses_indonesian_words(locales: Any) -> None:
     assert indonesian["settings.heading"] == "Pengaturan"
     assert indonesian["action.generate"] != locales["en"]["action.generate"]
     assert any("Anda" in value for value in indonesian.values())
+
+
+# --------------------------------------------------------------- full controls (3.2)
+
+
+#: The fields SPEC.md section 8 asks for as a slider with a numeric input beside it.
+SLIDER_FIELDS = ("animation_duration", "hold_duration", "outline_width")
+
+#: Every number box, including the one that stays a plain field.
+NUMBER_FIELDS = ("font_size", *SLIDER_FIELDS)
+
+#: The status line can say any of these, and all of them are copy (SPEC.md section 8).
+STATUS_KEYS = (
+    "status.ready",
+    "status.queued",
+    "status.running",
+    "status.hd_queued",
+    "status.hd_running",
+    "status.cached",
+    "status.done",
+    "status.saving",
+    "status.press_play",
+    "status.cancelled",
+    "status.failed",
+)
+
+#: A storage call may only be made where a refusal is caught, since a private window throws.
+GUARDED_STORAGE = re.compile(r"try \{\n\s+(?:\w+ = )?localStorage\.(setItem|getItem)\(")
+
+
+def app_source() -> str:
+    return (REPO_ROOT / "ui" / "app.js").read_text(encoding="utf-8")
+
+
+def controls_block() -> str:
+    """The :data:`CONTROLS` table, whose entries stay one object literal per field."""
+    return app_source().split("const CONTROLS = {", 1)[1].split("\n};", 1)[0]
+
+
+def control_body(name: str) -> str:
+    match = re.search(rf"^  {name}: \{{([^}}]*)\}}", controls_block(), flags=re.M)
+    assert match is not None, name
+    return match.group(1)
+
+
+def test_the_timing_and_outline_fields_are_the_sliders() -> None:
+    sliders = {
+        name
+        for name, body in re.findall(r"^  ([a-z_]+): \{([^}]*)\}", controls_block(), flags=re.M)
+        if 'kind: "slider"' in body
+    }
+    assert sliders == set(SLIDER_FIELDS)
+
+
+@pytest.mark.parametrize("field", SLIDER_FIELDS)
+def test_a_slider_is_a_native_range_boxed_by_the_same_number_field(field: str) -> None:
+    """The native range keeps keyboard, touch and screen-reader behavior for free; the number
+    box beside it holds the value the form submits and validates."""
+    body = control_body(field)
+    source = app_source()
+    assert 'kind: "slider"' in body
+    assert 'slider.type = "range"' in source
+    assert 'control.type = "number"' in source
+    assert "pair.append(slider, control)" in source
+
+
+@pytest.mark.parametrize("field", NUMBER_FIELDS)
+def test_a_numeric_step_reaches_the_top_of_the_advertised_range(field: str) -> None:
+    """A step that does not divide the range leaves the maximum unreachable by dragging or by
+    the spinner, and the backend would then reject a value the control allowed."""
+    step_match = re.search(r"step: ([0-9.]+)", control_body(field))
+    assert step_match is not None, field
+    step = float(step_match.group(1))
+    limits = api_main.options_payload()["limits"][field]
+    span = float(limits["max"]) - float(limits["min"])
+    assert span % step == pytest.approx(0.0, abs=1e-9), field
+
+
+def test_the_slider_takes_its_name_from_the_visible_label() -> None:
+    """Two controls, one label: the range points at the text already on screen rather than
+    carrying an invented `aria-label` (modern-web-guidance `forms`)."""
+    source = app_source()
+    assert "label.id = labelId(name);" in source
+    assert 'slider.setAttribute("aria-labelledby", labelId(name))' in source
+    assert '"aria-label"' not in source
+
+
+def test_a_slider_with_a_unit_is_spoken_through_intl() -> None:
+    """`aria-valuetext` is the range's own slot for a formatted value. The words come from
+    `Intl`, which is what says "1 second" and "2,5 detik" without a locale key per plural
+    (SPEC.md section 8); a field with no unit to name announces its plain number instead."""
+    source = app_source()
+    assert '"aria-valuetext"' in source
+    assert "const UNIT_FORMATTERS = { seconds };" in source
+    assert 'unit: "seconds"' in controls_block()
+    assert "unit: null" in controls_block()
+
+
+def test_durations_are_said_with_the_locale_unit(scripts: str) -> None:
+    assert 'unit: "second"' in scripts
+    assert "export function seconds(value)" in scripts
+
+
+@pytest.mark.parametrize("action", ["generate", "hd"])
+def test_both_render_buttons_validate_before_requesting(action: str) -> None:
+    assert f'requestRender("{action}")' in app_source()
+
+
+def test_the_hd_button_fixes_the_quality_and_asks_for_an_attachment() -> None:
+    source = app_source()
+    assert 'const HD_QUALITY = "hd";' in source
+    assert "quality: HD_QUALITY" in source
+    assert 'const DOWNLOAD_QUERY = "?download=1";' in source
+    assert "link.href = source + DOWNLOAD_QUERY;" in source
+
+
+def test_the_hd_quality_is_one_the_backend_offers() -> None:
+    ids = {entry["id"] for entry in api_main.options_payload()["qualities"]}
+    assert "hd" in ids
+
+
+def test_only_the_apps_own_video_path_becomes_a_source_or_a_link() -> None:
+    """Both the player and the download get their URL from a response, so neither accepts
+    anything that does not start at the endpoint that serves cached videos."""
+    source = app_source()
+    assert "url.startsWith(ENDPOINTS.video)" in source
+    assert "view.player.src = source;" in source
+    assert "link.href = source + DOWNLOAD_QUERY;" in source
+
+
+def test_the_running_state_disables_both_actions_and_offers_cancel() -> None:
+    source = app_source()
+    assert "view.generate.disabled = busy;" in source
+    assert "view.download.disabled = busy;" in source
+    assert "view.cancel.hidden = !busy;" in source
+    assert "view.busy.hidden = !busy;" in source
+
+
+def test_cancel_retires_the_wait_instead_of_submitting_the_form(html: str) -> None:
+    """The button is a `type="button"`, and the wait checks the token it was started with, so a
+    cancelled render cannot write over what the user did next."""
+    cancel = re.search(r'<button[^>]*id="cancel"[^>]*>', html)
+    assert cancel is not None
+    assert 'type="button"' in cancel.group(0)
+    assert "hidden" in cancel.group(0)
+    source = app_source()
+    assert "view.cancel.addEventListener(" in source
+    assert "runToken += 1;" in source
+    assert "if (token !== runToken) {" in source
+
+
+@pytest.mark.parametrize("tag", ["generate", "download-hd", "cancel", "retry"])
+def test_every_button_is_empty_and_named_by_a_locale_key(html: str, tag: str) -> None:
+    """No copy in the markup, and no button that defaults to submitting the form."""
+    button = re.search(rf'<button[^>]*id="{tag}"[^>]*>\s*</button>', html)
+    assert button is not None, tag
+    markup = button.group(0)
+    assert 'data-i18n="action.' in markup
+    if 'type="submit"' not in markup:
+        assert 'type="button"' in markup
+
+
+def test_the_settings_are_remembered_under_the_name_from_app_meta() -> None:
+    """SPEC.md section 8 asks for the last settings; the key keeps the app's own slug so the
+    name still has one owner (SPEC.md section 3)."""
+    source = app_source()
+    assert "${options.app.slug}" in source
+    assert "saveSettings();" in source
+    assert "restoreSettings();" in source
+
+
+def test_local_storage_is_only_touched_where_a_refusal_is_caught() -> None:
+    assert len(GUARDED_STORAGE.findall(app_source())) == 2
+
+
+def test_a_remembered_value_is_used_only_if_the_options_still_allow_it() -> None:
+    """Local storage is not trusted: an older version, an edited file, or a limit that has
+    since moved must not push an unusable value into a render request."""
+    source = app_source()
+    assert "allowedValue(name, value)" in source
+    assert "stored.background?.type" in source
+    assert "options.hex_color_pattern" in source
+    assert 'value.split("\\n").length <= limits.max_lines' in source
+
+
+def test_every_hint_key_in_the_controls_is_translated(locales: Any) -> None:
+    keys = set(re.findall(r'hint: "([a-z_.]+)"', controls_block()))
+    assert {"hint.text", "hint.seconds", "hint.points", "hint.number"} == keys
+    for name, messages in locales.items():
+        for key in keys:
+            assert key in messages, f"{name} is missing {key}"
+
+
+@pytest.mark.parametrize("key", STATUS_KEYS)
+def test_every_status_the_interface_can_show_has_a_translation(key: str, locales: Any) -> None:
+    for name, messages in locales.items():
+        assert key in messages, name
+
+
+@pytest.mark.parametrize("key", ["action.download_hd", "action.cancel", "action.retry"])
+def test_the_new_actions_are_worded_differently_in_indonesian(key: str, locales: Any) -> None:
+    """A guard against shipping English copy under the Indonesian key for a new button."""
+    assert locales["id"][key] != locales["en"][key]
 
 
 # ------------------------------------------------------------------ served contract

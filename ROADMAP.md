@@ -41,7 +41,7 @@ Build in this order. Each task is one pull request unless noted. Tick the checkb
 
 - [x] **3.1 UI skeleton** served by FastAPI: form built from `/api/options`, Generate button, loading state, video player. (Use the `modern-web-guidance` skill first.) Set up i18n from the start: `ui/i18n.js` plus `locales/en.json` and `locales/id.json`, no hard-coded visible strings.
   Acceptance: from a browser, change text and color, press Generate, see the video play. Screenshot attached.
-- [ ] **3.2 Full controls**: duration sliders, font dropdown, three color pickers, outline width, Download HD, cancel, friendly errors, settings remembered in `localStorage`.
+- [x] **3.2 Full controls**: duration sliders, font dropdown, three color pickers, outline width, Download HD, cancel, friendly errors, settings remembered in `localStorage`.
   Acceptance: manual walkthrough of every control with screenshots; error state shown by stopping the backend.
 - [ ] **3.3 Accessibility pass**: keyboard use, focus, labels, contrast, reduced motion.
   Acceptance: checklist in the PR; keyboard-only run-through described.

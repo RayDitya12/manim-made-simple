@@ -28,6 +28,18 @@
               type="submit"
               data-i18n="action.generate"
             ></button>
+            <button
+              id="download-hd"
+              class="secondary"
+              type="button"
+              data-i18n="action.download_hd"
+            ></button>
+            <button
+              id="cancel"
+              type="button"
+              data-i18n="action.cancel"
+              hidden
+            ></button>
             <progress
               id="busy"
               class="busy"
@@ -38,6 +50,12 @@
 
           <div id="job-error" class="callout" role="alert" hidden>
             <p id="job-error-text"></p>
+            <button
+              id="retry"
+              type="button"
+              data-i18n="action.retry"
+              hidden
+            ></button>
           </div>
         </form>
       </section>

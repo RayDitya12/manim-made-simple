@@ -163,6 +163,23 @@ def test_file_name_is_key_dash_quality_dash_extension() -> None:
     assert cache.VIDEO_NAME_PATTERN.fullmatch(cache.video_file_name(key, "hd"))
 
 
+def test_the_stem_is_the_file_name_without_the_extension() -> None:
+    """render_video is handed a stem, so the queue needs the two to agree."""
+    key = key_for()
+    assert cache.video_stem(key, "hd") == f"{key}-hd"
+    assert cache.video_file_name(key, "hd") == f"{cache.video_stem(key, 'hd')}.mp4"
+
+
+def test_is_cached_wants_a_real_non_empty_file(tmp_path) -> None:
+    missing = tmp_path / f"{key_for()}-preview.mp4"
+    assert cache.is_cached(missing) is False
+    missing.touch()
+    assert cache.is_cached(missing) is False, "an empty leftover is not a video"
+    missing.write_bytes(b"video")
+    assert cache.is_cached(missing) is True
+    assert cache.is_cached(tmp_path) is False, "a directory is not a video either"
+
+
 def test_one_key_per_quality_so_a_preview_never_answers_an_hd_request() -> None:
     key = key_for()
     assert cache.video_file_name(key, "preview") != cache.video_file_name(key, "hd")

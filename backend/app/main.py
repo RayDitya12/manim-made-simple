@@ -31,7 +31,8 @@ report that names a version is a report about the interpreter that is really run
 
 The app owns one :class:`~backend.app.jobs.JobQueue`, whose cache lives in the data
 directory of :mod:`backend.app.data_dir`. File serving is
-:mod:`backend.app.videos`; the host/CORS hardening (2.5) is deliberately not here yet.
+:mod:`backend.app.videos`; :mod:`backend.app.security` puts the loopback ``Host`` guard and
+the localhost-only CORS policy around every route.
 """
 
 from __future__ import annotations
@@ -46,7 +47,7 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 
-from backend.app import app_meta, cache, data_dir, jobs, videos
+from backend.app import app_meta, cache, data_dir, jobs, security, videos
 from backend.app.models import (
     ANIMATIONS,
     FONTS,
@@ -236,6 +237,7 @@ def create_app(job_queue: jobs.JobQueue | None = None) -> FastAPI:
         lifespan=lifespan,
     )
     app.state.jobs = render_queue
+    security.install(app)
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
@@ -326,7 +328,7 @@ def main() -> int:
     """
     import uvicorn
 
-    host = "127.0.0.1"
+    host = security.LOOPBACK_HOST
     port = 8000
     cache_dir = data_dir.describe()
     print(f"{app_meta.app_name()} backend on http://{host}:{port} (Ctrl+C to stop)")

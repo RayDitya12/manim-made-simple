@@ -32,7 +32,7 @@ Build in this order. Each task is one pull request unless noted. Tick the checkb
   Acceptance: tests prove same params give the same key, any changed field gives a different key.
 - [x] **2.3 Job queue** (`jobs.py`): single worker, `POST /api/render`, `GET /api/jobs/{id}`.
   Acceptance: render a sample via `curl`, poll to `done`, second identical request returns `cached: true` instantly; invalid payload returns 422 with a stable error `code` and a short English message.
-- [ ] **2.4 Video endpoint** with strict name validation and `?download=1`.
+- [x] **2.4 Video endpoint** with strict name validation and `?download=1`.
   Acceptance: path traversal attempts (`../`, encoded variants) are rejected in tests; valid file streams and plays.
 - [ ] **2.5 Host and CORS hardening**: bind `127.0.0.1`, reject unexpected `Host` headers.
   Acceptance: tests show a bad `Host` is rejected.

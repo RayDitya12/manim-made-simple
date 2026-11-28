@@ -1326,6 +1326,31 @@ def test_the_indonesian_file_keeps_indonesian_spelling(locales: dict[str, dict[s
             assert word.lower() not in value.lower(), f"id:{key} = {value!r}"
 
 
+#: Shapes found in the Indonesian file during the owner review of ROADMAP 3.5. Each one is
+#: grammatical and wrong: it is the English sentence's skeleton wearing Indonesian words, so the
+#: reader hears the translation instead of the instruction.
+INDONESIAN_CALQUES = (
+    "tiba sebagai",
+    "tidak lagi ada",
+    "disajikan",
+    "Permintaan itu meminta",
+    "Ambil salah satu",
+    "Memutar salinan",
+    "Antrean render sedang",
+    "Teks memiliki",
+    "karakter kontrol",
+)
+
+
+def test_the_indonesian_copy_avoids_those_calques(
+    locales: dict[str, dict[str, str]],
+) -> None:
+    """The wording pass stays a rule, not a memory: a retranslated line in the same shape is red."""
+    for key, value in locales["id"].items():
+        for shape in INDONESIAN_CALQUES:
+            assert shape not in value, f"id:{key} = {value!r}"
+
+
 def test_the_language_picker_is_an_option_list_with_a_label(html: str) -> None:
     """SPEC.md section 8: a switcher the keyboard reaches and a screen reader can name."""
     select = re.search(r'<select[^>]*id="language"[^>]*></select>', html)
@@ -1379,14 +1404,24 @@ def test_switching_language_rebuilds_the_form_and_keeps_the_values() -> None:
 
 def test_the_lines_that_are_already_visible_get_said_again() -> None:
     """The status under a running render and an error on screen must not stay in the old
-    language, and a new error replaces the remembered one."""
+    language, and a new error replaces the remembered one.
+
+    A failed render shows both lines at once, so the screenshot pass found the first version of
+    this wrong: re-saying the status only when there was no error left the status in Indonesian
+    under an English interface.
+    """
     source = app_source()
     assert "lastStatusKey = key;" in source
-    assert "setStatus(lastStatusKey);" in source
-    assert "view.errorText.textContent = errorText(lastError);" in source
     assert "lastError = api;" in source
     hide = source.split("function hideError() {", 1)[1].split("\n}", 1)[0]
     assert "lastError = null;" in hide
+    switch = source.split("async function switchLocale(requested) {", 1)[1].split("\n}", 1)[0]
+    assert "if (lastStatusKey !== null) {\n    setStatus(lastStatusKey);\n  }" in switch
+    assert (
+        "if (lastError !== null) {\n    view.errorText.textContent = errorText(lastError);\n  }"
+        in switch
+    )
+    assert "else if" not in switch
 
 
 def test_an_http_status_without_an_error_object_shares_one_line() -> None:

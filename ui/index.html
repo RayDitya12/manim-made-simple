@@ -9,8 +9,20 @@
   </head>
   <body>
     <header class="masthead">
-      <h1 id="app-name"></h1>
-      <p class="tagline" data-i18n="app.tagline"></p>
+      <div class="masthead-text">
+        <h1 id="app-name"></h1>
+        <p class="tagline" data-i18n="app.tagline"></p>
+      </div>
+      <!-- `app.js` fills the options from `i18n.js`, in each language's own name, so the
+           picker stays usable whoever reads it. The label is copy; the options are not. -->
+      <div class="language" id="language-row">
+        <label
+          id="language-label"
+          for="language"
+          data-i18n="language.label"
+        ></label>
+        <select id="language" data-i18n-title="language.title"></select>
+      </div>
     </header>
 
     <main class="layout">

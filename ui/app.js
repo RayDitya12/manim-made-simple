@@ -145,7 +145,9 @@ const ELEMENT_IDS = {
   error: "job-error",
   errorText: "job-error-text",
   player: "player",
-  playerEmpty: "player-empty",
+  frame: "preview-frame",
+  frameText: "preview-frame-text",
+  frameMeta: "preview-meta",
 };
 
 let options = null;
@@ -430,7 +432,12 @@ function buildRow(row) {
 
 function buildForm() {
   view.fields.replaceChildren(...ROWS.map(buildRow));
-  for (const name of ["text_color", "outline_color", "background_color"]) {
+  for (const name of [
+    "text",
+    "text_color",
+    "outline_color",
+    "background_color",
+  ]) {
     document
       .getElementById(fieldId(name))
       .addEventListener("input", paintPreview);
@@ -441,9 +448,13 @@ function buildForm() {
 }
 
 /**
- * Paint the area behind the player with the requested background and text colour, so the form
- * and the video pane agree before anything is rendered. A custom property is the only thing
- * this file writes to a style: the rules stay in `styles.css`.
+ * Paint the frame the video will be drawn on: the background and text color that were picked,
+ * and the line of text as it was typed. This is the same three values the render receives, so
+ * the slate is the real output at the real shape rather than a picture of an idea of it. The
+ * font is not mirrored, because the interface cannot show the fonts the renderer registers,
+ * and the size here follows the frame, not the `font_size` field, which counts in the video's
+ * own units. A custom property is the only thing this file writes to a style: the rules stay
+ * in `styles.css`.
  */
 function paintPreview() {
   view.output.style.setProperty(
@@ -451,17 +462,29 @@ function paintPreview() {
     valueOf("background_color"),
   );
   view.output.style.setProperty("--preview-color", valueOf("text_color"));
+  view.frameText.textContent = valueOf("text");
 }
 
-/** Keep the player at the size the chosen quality produces, so the pane does not jump. */
+/** Keep the player at the size the chosen quality produces, so the pane does not jump, and say
+ *  under the frame what that quality is: its name, its shape, its frame rate. */
 function sizePlayer() {
   const quality = options.qualities.find(
     (entry) => entry.id === valueOf("quality"),
   );
-  if (quality) {
-    view.player.width = quality.width;
-    view.player.height = quality.height;
+  if (!quality) {
+    return;
   }
+  view.player.width = quality.width;
+  view.player.height = quality.height;
+  view.output.style.setProperty(
+    "--preview-ratio",
+    `${quality.width} / ${quality.height}`,
+  );
+  view.frameMeta.textContent = [
+    t(`option.quality.${quality.id}`),
+    `${number(quality.width)} \u00d7 ${number(quality.height)}`,
+    `${number(quality.fps)} fps`,
+  ].join(" \u00b7 ");
 }
 
 /** The render parameters for the current form, in the SPEC.md section 5 shape. */
@@ -675,7 +698,7 @@ async function showVideo(url) {
   if (source === null) {
     return false;
   }
-  view.playerEmpty.hidden = true;
+  view.frame.hidden = true;
   view.player.hidden = false;
   view.player.src = source;
   setStatus(t("status.done"));

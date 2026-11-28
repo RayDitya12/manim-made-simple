@@ -45,7 +45,7 @@
   "status.press_play": "Your video is ready. Press play.",
   "status.cancelled": "Cancelled. Nothing was lost: your settings are still here.",
   "status.failed": "That render did not finish",
-  "error.unreachable": "The app is not answering. Check that the backend is still running.",
+  "error.unreachable": "The app is not answering. Close the app and open it again.",
   "error.unexpected": "Something went wrong",
   "error.http": "The app answered with an error instead of a result. The code was HTTP {status}.",
   "error.host_not_allowed": "This app only answers its own interface on this machine. A request from somewhere else is refused.",

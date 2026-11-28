@@ -93,8 +93,34 @@ body {
 }
 
 .masthead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  justify-content: space-between;
+  gap: var(--gap-field);
   padding: var(--gap-pane);
   border-block-end: 1px solid var(--line);
+}
+
+/* The picker sits with the title it belongs to, not with the settings below it: the language
+   of the whole page is a page-level choice. It is a normal label and select, so it takes the
+   same edge, focus and hover treatment as every other control. */
+.language {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.language label {
+  color: var(--ink-muted);
+  font-size: 0.875rem;
+}
+
+.language select {
+  min-inline-size: 8rem;
+  min-block-size: 2rem;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.875rem;
 }
 
 .masthead h1 {

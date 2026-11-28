@@ -47,7 +47,7 @@ Build in this order. Each task is one pull request unless noted. Tick the checkb
   Acceptance: checklist in the PR; keyboard-only run-through described.
 - [x] **3.4 Design pass** with the `heydamir/unslop` skill (UI only, SPEC.md section 8 still fully satisfied). Owner approves the direction first.
   Acceptance: before/after screenshots; all controls still work.
-- [ ] **3.5 Localization complete**: automatic language from the system locale (Electron `app.getLocale()` via preload, browser `navigator.languages`), language switcher with remembered override, error codes translated, parity test for both locale files.
+- [x] **3.5 Localization complete**: automatic language from the system locale (Electron `app.getLocale()` via preload, browser `navigator.languages`), language switcher with remembered override, error codes translated, parity test for both locale files.
   Acceptance: screenshots of the full UI in English and Indonesian; a test fails when a key exists in only one file; forcing a system locale of `id-ID` and `en-US` selects the right language; no layout clipping in Indonesian. The owner reviews the Indonesian copy.
 
 ## Phase 4: Extra features

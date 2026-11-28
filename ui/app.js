@@ -1,6 +1,6 @@
 /**
- * The interface: options in, controls built, render requested, video played or saved
- * (ROADMAP tasks 3.1 and 3.2, SPEC.md section 8).
+ * The interface: options in, controls built, render requested, video played or saved, and the
+ * language chosen and switched (ROADMAP tasks 3.1 to 3.5, SPEC.md section 8).
  *
  * Four rules shape this file:
  *
@@ -18,12 +18,16 @@
 
 import {
   DEFAULT_LOCALE,
+  NATIVE_NAMES,
   applyDocumentTitle,
   applyText,
   errorText,
   loadLocale,
+  locale,
   number,
+  pickLocale,
   seconds,
+  systemLanguages,
   t,
 } from "/i18n.js";
 
@@ -44,6 +48,10 @@ const DOWNLOAD_QUERY = "?download=1";
  *  name still lives in one place (SPEC.md section 3). Bump the suffix when a stored document
  *  can no longer be restored as it is. */
 const SETTINGS_SUFFIX = "settings.v1";
+
+/** Where the chosen language is remembered, beside the settings (SPEC.md section 8). An
+ *  override stored here wins over the system locale on every later visit. */
+const LOCALE_SUFFIX = "locale.v1";
 
 /** How often a running job is polled. Render progress is not reliably known, so the UI shows
  *  a status sentence rather than a percentage (SPEC.md section 8). */
@@ -134,6 +142,8 @@ const ROWS = [
 /** The ids in the markup this script drives, mapped to the name used below. */
 const ELEMENT_IDS = {
   appName: "app-name",
+  language: "language",
+  languageLabel: "language-label",
   status: "job-status",
   settings: "settings",
   fields: "fields",
@@ -160,6 +170,12 @@ let runToken = 0;
 /** Which button `Try again` presses. The form is read again when it is, so the user can fix
  *  what the error complained about and press it without a second step (SPEC.md section 8). */
 let lastAction = null;
+
+/** The last sentence the status line showed, and the last error object the callout showed. A
+ *  language switch re-says both in the new locale, so the line under a running render never
+ *  goes silent or keeps an English sentence after the user asks for Indonesian. */
+let lastStatusKey = null;
+let lastError = null;
 
 /** A failure that already has the SPEC.md section 6 shape the error line shows. */
 class ApiFailure extends Error {
@@ -448,6 +464,105 @@ function buildForm() {
 }
 
 /**
+ * The language picker in the header (SPEC.md section 8).
+ *
+ * Its options name each language in that language itself, from `NATIVE_NAMES` in `i18n.js`,
+ * never from the locale files: the list is a way of asking "which of these can you read", so
+ * translating it would defeat it. The selected entry is the locale already on screen, whatever
+ * decided it, so the switcher shows the truth rather than only an override.
+ */
+function buildLanguage() {
+  const select = view.language;
+  select.replaceChildren();
+  for (const id of Object.keys(NATIVE_NAMES)) {
+    const entry = document.createElement("option");
+    entry.value = id;
+    entry.textContent = NATIVE_NAMES[id];
+    select.append(entry);
+  }
+  select.value = locale();
+  select.addEventListener("change", () => switchLocale(select.value));
+}
+
+/** The values every control holds right now, in the shape :func:`restoreSettings` reads. */
+function currentFormValues() {
+  const values = currentParams();
+  delete values.background;
+  return values;
+}
+
+/** Put a set of values back into the controls, used when a language switch rebuilds the form. */
+function applyFormValues(values) {
+  for (const [name, value] of Object.entries(values)) {
+    const node = document.getElementById(fieldId(name));
+    if (node) {
+      node.value = value;
+    }
+  }
+}
+
+/**
+ * Switch the whole interface to one locale and remember the choice (SPEC.md section 8).
+ *
+ * The form is rebuilt rather than patched, because a translated string sits in three different
+ * kinds of place: `data-i18n` text, an option label chosen when the control was built, and an
+ * `aria-valuetext` or hint whose numbers `Intl` formatted for the old locale. Rebuilding is the
+ * one path that refreshes all three, and the values are put back around it so the user's work is
+ * untouched. What the user typed for the video is never translated (SPEC.md section 8).
+ */
+async function switchLocale(requested) {
+  if (!Object.hasOwn(NATIVE_NAMES, requested) || requested === locale()) {
+    view.language.value = locale();
+    return;
+  }
+  writeStoredString(localeKey(), requested);
+  const values = currentFormValues();
+  const wasFormVisible = !view.settings.hidden;
+  await loadLocale(requested);
+  applyText(document);
+  applyDocumentTitle(options.app.name);
+  if (wasFormVisible) {
+    buildForm();
+    applyFormValues(values);
+    syncSliders();
+    paintPreview();
+    sizePlayer();
+  }
+  if (lastError !== null) {
+    view.errorText.textContent = errorText(lastError);
+  } else if (lastStatusKey !== null) {
+    setStatus(lastStatusKey);
+  }
+  view.language.value = requested;
+}
+
+/**
+ * The locale this visit opens in: the remembered override when storage holds one this app
+ * offers, otherwise the language the system reports (SPEC.md section 8).
+ */
+function openingLocale() {
+  const stored = readStoredString(localeKey());
+  if (stored !== null && Object.hasOwn(NATIVE_NAMES, stored)) {
+    return stored;
+  }
+  return pickLocale(systemLanguages());
+}
+
+/**
+ * Paint the interface in one locale, giving up quietly if its file cannot be read. Used twice:
+ * before the options arrive, so an app that cannot be reached can still answer in the user's
+ * language, and again as the real load once they have.
+ */
+async function tryLocale(id) {
+  try {
+    await loadLocale(id);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Paint the frame the video will be drawn on: the background and text color that were picked,
  * and the line of text as it was typed. This is the same three values the render receives, so
  * the slate is the real output at the real shape rather than a picture of an idea of it. The
@@ -510,30 +625,50 @@ function paramsFor(action) {
   return action === "hd" ? { ...params, quality: HD_QUALITY } : params;
 }
 
-function settingsKey() {
-  return `${options.app.slug}.${SETTINGS_SUFFIX}`;
+/** One remembered string, or `null` when storage holds nothing usable. What sits in local
+ *  storage is not trusted: another program, an older version, or an edited file can put
+ *  anything there, and a private window can refuse the read outright. */
+function readStoredString(key) {
+  let text = null;
+  try {
+    text = localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+  return typeof text === "string" && text !== "" ? text : null;
 }
 
-/** Remember the settings that were just accepted (SPEC.md section 8). Saving happens after the
- *  backend has validated the request, so only a set of values that can render comes back. */
-function saveSettings() {
+function writeStoredString(key, value) {
   try {
-    localStorage.setItem(settingsKey(), JSON.stringify(currentParams()));
+    localStorage.setItem(key, value);
   } catch {
     // Storage the browser refuses, for instance in a private window, only costs the memory.
   }
 }
 
-/** The stored document, or `null`. What is in local storage is not trusted: another program,
- *  an older version, or an edited file can put anything there. */
+function storageKey(suffix) {
+  // The slug comes from the options endpoint so the app's name still has one owner
+  // (SPEC.md section 3); the fallback covers a value stored before options were read.
+  return `${options?.app.slug ?? "manim-made-simple"}.${suffix}`;
+}
+
+function localeKey() {
+  return storageKey(LOCALE_SUFFIX);
+}
+
+/** Remember the settings that were just accepted (SPEC.md section 8). Saving happens after the
+ *  backend has validated the request, so only a set of values that can render comes back. */
+function saveSettings() {
+  writeStoredString(
+    storageKey(SETTINGS_SUFFIX),
+    JSON.stringify(currentParams()),
+  );
+}
+
+/** The stored document, or `null`. */
 function storedParams() {
-  let text = null;
-  try {
-    text = localStorage.getItem(settingsKey());
-  } catch {
-    return null;
-  }
-  if (!text) {
+  const text = readStoredString(storageKey(SETTINGS_SUFFIX));
+  if (text === null) {
     return null;
   }
   try {
@@ -602,8 +737,11 @@ function restoreSettings() {
   }
 }
 
-function setStatus(text) {
-  view.status.textContent = text;
+/** Show one status sentence by its locale key, and remember the key: the line is translated
+ *  again when the language changes, so a render in flight keeps speaking the new locale. */
+function setStatus(key) {
+  lastStatusKey = key;
+  view.status.textContent = t(key);
 }
 
 /**
@@ -631,7 +769,7 @@ function cancelRender() {
   runToken += 1;
   setBusy(false);
   hideError();
-  setStatus(t("status.cancelled"));
+  setStatus("status.cancelled");
 }
 
 /** The status sentence for one job of one action. An HD render is slower and says so. */
@@ -648,7 +786,8 @@ function statusKey(action, jobStatus) {
  * start-up, hides that button rather than promising a retry it cannot make.
  */
 function showError(api, action = null) {
-  setStatus(t("status.failed"));
+  setStatus("status.failed");
+  lastError = api;
   view.errorText.textContent = errorText(api);
   lastAction = action;
   view.retry.hidden = action === null;
@@ -659,6 +798,7 @@ function hideError() {
   view.error.hidden = true;
   view.errorText.textContent = "";
   lastAction = null;
+  lastError = null;
 }
 
 function sleep(ms) {
@@ -680,7 +820,7 @@ async function waitForJob(jobId, token, action) {
     if (FINAL_STATUSES.has(job.status)) {
       return job;
     }
-    setStatus(t(statusKey(action, job.status)));
+    setStatus(statusKey(action, job.status));
     await sleep(POLL_MS);
   }
 }
@@ -701,16 +841,16 @@ async function showVideo(url) {
   view.frame.hidden = true;
   view.player.hidden = false;
   view.player.src = source;
-  setStatus(t("status.done"));
+  setStatus("status.done");
   if (window.matchMedia(REDUCED_MOTION).matches) {
-    setStatus(t("status.press_play"));
+    setStatus("status.press_play");
     return true;
   }
   try {
     await view.player.play();
   } catch {
     // A browser that will not start a video by itself still leaves the player ready to use.
-    setStatus(t("status.press_play"));
+    setStatus("status.press_play");
   }
   return true;
 }
@@ -726,7 +866,7 @@ function saveVideoFile(url) {
   if (source === null) {
     return false;
   }
-  setStatus(t("status.saving"));
+  setStatus("status.saving");
   const link = document.createElement("a");
   link.href = source + DOWNLOAD_QUERY;
   link.download = source.slice(ENDPOINTS.video.length);
@@ -745,7 +885,7 @@ async function startRender(action) {
   const token = ++runToken;
   hideError();
   setBusy(true);
-  setStatus(t(statusKey(action, "queued")));
+  setStatus(statusKey(action, "queued"));
   try {
     const accepted = await requestJson(ENDPOINTS.render, {
       method: "POST",
@@ -757,7 +897,7 @@ async function startRender(action) {
     }
     saveSettings();
     if (accepted.cached && action !== "hd") {
-      setStatus(t("status.cached"));
+      setStatus("status.cached");
     }
     const job = await waitForJob(accepted.job_id, token, action);
     if (job === null) {
@@ -802,16 +942,31 @@ function cacheElements() {
 
 async function boot() {
   cacheElements();
-  await loadLocale(DEFAULT_LOCALE);
-  applyText(document);
 
+  // Options first, then the language: the remembered override lives under the app's own
+  // slug, which only this endpoint names. Nothing is on screen yet, so the extra wait
+  // shows no English first.
+  let failure = null;
   try {
     options = await requestJson(ENDPOINTS.options);
-  } catch (failure) {
-    showError(failure.api);
+  } catch (caught) {
+    failure = caught.api ?? { code: "unexpected", params: {} };
+  }
+
+  // The language is chosen only now, because the remembered override lives under the app's own
+  // slug and the slug arrives with the options. Nothing is on screen yet either way, so the wait
+  // shows no English first, and a locale file that cannot be read leaves the visit on the empty
+  // English default rather than on half-translated copy.
+  if (failure !== null) {
+    await tryLocale(DEFAULT_LOCALE);
+    applyText(document);
+    showError(failure);
     return;
   }
 
+  await tryLocale(openingLocale());
+  applyText(document);
+  buildLanguage();
   view.appName.textContent = options.app.name;
   applyDocumentTitle(options.app.name);
   buildForm();
@@ -819,7 +974,7 @@ async function boot() {
   syncSliders();
   paintPreview();
   sizePlayer();
-  setStatus(t("status.ready"));
+  setStatus("status.ready");
   view.settings.hidden = false;
 
   // The browser enforces the min, max and maxlength this form was built with, and

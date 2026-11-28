@@ -8,8 +8,9 @@
  * Nothing in this file writes markup: `textContent` and `title` only, so a translation can
  * never become an injection sink.
  *
- * ROADMAP 3.1 sets the mechanism up and starts every session in English. ROADMAP 3.5 adds the
- * automatic choice from the system locale, the switcher, and the full error-code copy.
+ * ROADMAP 3.1 set the mechanism up. ROADMAP 3.5 added the automatic choice from the system
+ * locale (`pickLocale` and `systemLanguages` below), the switcher in `app.js`, and the full
+ * error-code copy in the locale files.
  */
 
 /** Locales the app ships, and the file each one is served from. */
@@ -18,8 +19,22 @@ export const LOCALE_FILES = {
   id: "/locales/id.json",
 };
 
-/** The locale used until ROADMAP 3.5 decides one from the system. */
+/** The locale used when nothing points anywhere else: the language of the source and of the
+ *  fallback `message` every SPEC.md section 6 error object carries. */
 export const DEFAULT_LOCALE = "en";
+
+/**
+ * How each locale names itself to the user.
+ *
+ * An option in a language picker is always the language's own name, in that language: a person
+ * switching language is telling us which they read, not which language the label should be
+ * translated into. So this stays in the code, out of the locale files, the same way font names
+ * do (SPEC.md section 8).
+ */
+export const NATIVE_NAMES = {
+  en: "English",
+  id: "Bahasa Indonesia",
+};
 
 let messages = {};
 let current = DEFAULT_LOCALE;
@@ -60,6 +75,44 @@ export async function loadLocale(locale) {
 
 export function locale() {
   return current;
+}
+
+/**
+ * The language tags the machine reports, most preferred first (SPEC.md section 8).
+ *
+ * Inside Electron this is the hook the main process puts on the page through `preload.js`
+ * (ROADMAP 6.1: `app.getLocale()` and `app.getSystemLocale()`), which exists in a web browser
+ * too as `navigator.languages`, so the browser path needs no bridge. Both are read here, and
+ * the order is only a preference of detail: in the desktop app the two answer the same.
+ */
+export function systemLanguages() {
+  const sources = [
+    window.mtsSystemLanguages,
+    navigator.languages,
+    navigator.language,
+  ];
+  for (const source of sources) {
+    const tags = Array.isArray(source) ? source : [source];
+    const known = tags.filter((tag) => typeof tag === "string" && tag !== "");
+    if (known.length) {
+      return known;
+    }
+  }
+  return [];
+}
+
+/**
+ * The locale a list of system language tags selects.
+ *
+ * SPEC.md section 8: any tag beginning with `id` selects Indonesian, everything else falls back
+ * to English. A tag is matched on its language subtag, so `id`, `id-ID`, `id-ID-u-nu-latn` and
+ * an unexpected `in-ID` all agree with the browser's own negotiation.
+ */
+export function pickLocale(tags) {
+  const indonesian = tags.some(
+    (tag) => /^id(?:-|_|$)/i.test(tag) || /^in(?:-|_|$)/i.test(tag),
+  );
+  return indonesian ? "id" : DEFAULT_LOCALE;
 }
 
 /** The raw string for a key, or `undefined` when the locale does not carry it. */
@@ -106,13 +159,20 @@ export function seconds(value) {
  * The sentence for one SPEC.md section 6 error object: the translation of its stable `code`
  * when the locale carries one, otherwise the English `message` the backend sent. The object's
  * `params` (limits, counts) fill the placeholders and go through `Intl`.
+ *
+ * Any code starting with `http` is not stable enough for its own key: `http_<status>` names a response the backend
+ * produced without a JSON error object of its own, so it reads the shared `error.http` line,
+ * which shows the number, before the fallback ladder is reached.
  */
 export function errorText(error) {
   const params = {};
   for (const [name, value] of Object.entries(error?.params ?? {})) {
     params[name] = typeof value === "number" ? number(value) : value;
   }
-  const translated = error?.code ? lookup(`error.${error.code}`) : undefined;
+  let translated = error?.code ? lookup(`error.${error.code}`) : undefined;
+  if (translated === undefined && String(error?.code).startsWith("http")) {
+    translated = lookup("error.http");
+  }
   return format(translated ?? error?.message ?? t("error.unexpected"), params);
 }
 

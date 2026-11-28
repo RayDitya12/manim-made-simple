@@ -528,10 +528,13 @@ async function switchLocale(requested) {
     paintPreview();
     sizePlayer();
   }
+  // A failed render shows both lines at once, so each is re-said from what it remembers instead
+  // of the error hiding the status behind an else.
+  if (lastStatusKey !== null) {
+    setStatus(lastStatusKey);
+  }
   if (lastError !== null) {
     view.errorText.textContent = errorText(lastError);
-  } else if (lastStatusKey !== null) {
-    setStatus(lastStatusKey);
   }
   view.language.value = requested;
 }

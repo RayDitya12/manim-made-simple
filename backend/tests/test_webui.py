@@ -661,16 +661,19 @@ def test_the_new_actions_are_worded_differently_in_indonesian(key: str, locales:
 
 
 #: Foreground and background that carry text the user has to read, in either scheme.
-#: `accent` on `canvas` and `panel` is the quieter button's label; `accent-ink` on `accent` is
-#: Generate's; `danger` on `danger-bg` is the mark beside an error.
+#: `accent-ink` on `accent` and on `accent-hover` is Generate, at rest and under the pointer;
+#: `ink` on `raise` is the field label when the control it names is hovered; `danger` on
+#: `danger-bg` is the icon beside an error.
 TEXT_PAIRS = (
     ("ink", "canvas"),
     ("ink", "panel"),
+    ("ink", "raise"),
     ("ink-muted", "canvas"),
     ("ink-muted", "panel"),
     ("accent", "canvas"),
     ("accent", "panel"),
     ("accent-ink", "accent"),
+    ("accent-ink", "accent-hover"),
     ("ink", "danger-bg"),
     ("danger", "danger-bg"),
 )
@@ -733,9 +736,10 @@ def test_the_focus_ring_is_visible_against_both_backgrounds(dark: bool) -> None:
 def test_the_edge_of_an_operable_control_is_visible(dark: bool) -> None:
     """`--boundary` draws the edge of every field, button and the player. WCAG 1.4.11 asks 3:1
     for the boundary of a user interface component, so the token is measured rather than
-    eyeballed, and `--line` is left for the card edges that hold no control."""
+    eyeballed, and `--line` is left for the card edges that hold no control. `raise` counts too:
+    a hovered field keeps its edge, and the dark scheme needed a lighter boundary for that."""
     tokens = scheme_tokens(dark=dark)
-    for background in ("canvas", "panel"):
+    for background in ("canvas", "panel", "raise"):
         ratio = contrast(tokens["boundary"], tokens[background])
         assert ratio >= 3.0, f"against {background}: {ratio:.2f}:1"
 
@@ -824,6 +828,154 @@ def test_every_built_control_is_labelled_by_a_real_label_element() -> None:
     source = app_source()
     assert "label.htmlFor = fieldId(name);" in source
     assert "wrap.append(label)" in source
+
+
+# ------------------------------------------------------------------ design pass (3.4)
+
+
+#: The properties whose values are rhythm rather than type: these are the ones that have to sit
+#: on the 4px scale (unslop pass 1).
+SPACING_PROPERTIES = (
+    "margin",
+    "margin-block-end",
+    "padding",
+    "gap",
+    "block-size",
+    "inline-size",
+    "min-block-size",
+)
+
+
+def _spacing_values(css: str) -> list[tuple[str, str]]:
+    """Every ``(property, value)`` pair in the file that decides spacing."""
+    found = []
+    for name, value in re.findall(
+        rf"^\s*({'|'.join(SPACING_PROPERTIES)}):\s*([^;]+);", css, flags=re.M
+    ):
+        found.append((name, value.strip()))
+    return found
+
+
+def test_the_rhythm_is_on_one_scale() -> None:
+    """4px steps, so equal things have equal sizes and nothing is nudged by a stray 4.8px. The
+    three gap tokens are checked too, because most declarations read their value from them."""
+    css = style_source()
+    checked = 0
+    for name, value in _spacing_values(css):
+        for rem in re.findall(r"([\d.]+)rem", value):
+            steps = float(rem) * 16 / 4
+            assert steps == int(steps), f"{name}: {value} is not on the 4px scale"
+            checked += 1
+        for pixels in re.findall(r"([\d.]+)px", value):
+            assert float(pixels) % 4 == 0, f"{name}: {value} is not on the 4px scale"
+            checked += 1
+    for name, rem in re.findall(r"--gap-(\w+):\s*([\d.]+)rem;", css):
+        steps = float(rem) * 16 / 4
+        assert steps == int(steps), f"--gap-{name} is not on the 4px scale"
+        checked += 1
+    assert checked > 20, f"only {checked} spacing values were measured"
+
+
+def test_the_section_labels_are_words_and_not_shouting() -> None:
+    """Sentence case, normal tracking: the words are already short and a screen reader still has
+    to read them out (unslop pass 5, WCAG 3.3.2 aside)."""
+    css = style_source()
+    assert "text-transform" not in css
+    assert "letter-spacing" not in css
+
+
+def test_the_hierarchy_does_not_come_from_bold() -> None:
+    """Three weights would be a decision; 550, 650 and 700 were three accidents."""
+    weights = {int(value) for value in re.findall(r"font-weight:\s*(\d+)", style_source())}
+    assert weights and all(400 <= weight <= 600 for weight in weights), weights
+
+
+def test_the_error_mark_is_an_icon_and_not_a_letter(html: str) -> None:
+    """The "!" the stylesheet used to write is decoration no assistive technology can name, and
+    CSS text is not a translation (SPEC.md section 8)."""
+    css = style_source()
+    assert 'content: "' not in css
+    assert "content:'" not in css
+    icon = re.search(r"<svg[^>]*class=.icon.[^>]*>", html, flags=re.S)
+    assert icon is not None
+    assert 'aria-hidden="true"' in icon.group(0)
+    assert 'stroke-width="1.5"' in icon.group(0)
+
+
+def test_the_pointer_gets_an_answer_and_the_keyboard_keeps_its_own() -> None:
+    """A hover and a press state exist, and the only motion the page adds is a color or surface
+    step: no `transition: all`, no animated layout property."""
+    css = style_source()
+    assert re.search(r":hover \{|,?\s*:hover", css)
+    assert ":active" in css
+    for declaration in re.findall(r"transition:\s*([^;]+);", css):
+        assert "all" not in declaration, declaration
+
+
+def test_one_accent_marks_one_action() -> None:
+    """Generate is the only filled button on the screen, so the second action of the form has to
+    live in the neutral ramp (unslop pass 2)."""
+    css = style_source()
+    secondary = css.split("button.secondary {", 1)[1].split("}", 1)[0]
+    assert "var(--accent)" not in secondary
+
+
+def test_the_frame_shows_the_values_the_render_will_get(html: str) -> None:
+    """The preview pane is the video's own canvas: the two colors and the shape that go into the
+    request, not a picture of an idea of them, and not a sentence about a place."""
+    source = app_source()
+    css = style_source()
+    for hook in ('"--preview-background"', '"--preview-color"', '"--preview-ratio"'):
+        assert hook in source, hook
+    assert 'view.frameText.textContent = valueOf("text");' in source
+    for use in (
+        "background: var(--preview-background)",
+        "color: var(--preview-color)",
+        "aspect-ratio: var(--preview-ratio)",
+    ):
+        assert use in css, use
+    frame = re.search(r'<div class="frame"[^>]*>', html)
+    assert frame is not None and 'aria-hidden="true"' in frame.group(0)
+    # The text inside it is written by the script, so the markup still carries no copy.
+    assert 'id="preview-frame-text"></p>' in html
+
+
+def test_the_frame_text_scales_with_the_frame_and_stays_clamped() -> None:
+    """The line grows the way the render grows it, and the clamp keeps three lines of the
+    longest text the form allows inside the box (WCAG 1.4.10, 1.4.4)."""
+    css = style_source()
+    block = css.split(".frame-text {", 1)[1].split("}", 1)[0]
+    clamp = re.search(r"font-size: clamp\(([^)]*)\)", block)
+    assert clamp is not None
+    low, high = (
+        float(re.findall(r"[\d.]+(?=rem)", clamp.group(1))[0]),
+        float(re.findall(r"[\d.]+(?=rem)", clamp.group(1))[-1]),
+    )
+    assert high / low <= 2.5, "the zoom ceiling in the modern-web-guidance typography guide"
+    assert "container-type: inline-size" in css
+    assert "-webkit-line-clamp: 3" in block
+    # The line breaks the renderer receives are the breaks the slate shows.
+    assert "white-space: pre-line" in block
+
+
+def test_a_short_string_does_not_end_in_a_period(locales: Any) -> None:
+    """Labels, buttons and captions lose the full stop; a string that is two sentences keeps them,
+    because then it is a paragraph and not a label (unslop pass 4)."""
+    for name, messages in locales.items():
+        for key, value in messages.items():
+            if value.endswith(".") and ". " not in value.removesuffix("."):
+                raise AssertionError(f"{name}:{key} = {value!r}")
+            assert "!" not in value, f"{name}:{key}"
+
+
+def test_the_empty_state_holds_no_sentence_about_the_place(locales: Any) -> None:
+    """The frame replaced `Your video appears here once it has rendered.`: the slate says it, and
+    the line under it carries the real numbers instead."""
+    for name, messages in locales.items():
+        assert "player.empty" not in messages, name
+    source = app_source()
+    assert "playerEmpty" not in source
+    assert "view.frame.hidden = true;" in source
 
 
 # ------------------------------------------------------------------ served contract

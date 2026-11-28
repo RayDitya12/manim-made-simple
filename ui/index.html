@@ -49,6 +49,19 @@
           </div>
 
           <div id="job-error" class="callout" role="alert" hidden>
+            <!-- Decorative: the sentence beside it says what happened. -->
+            <svg
+              class="icon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              aria-hidden="true"
+              focusable="false"
+            >
+              <circle cx="12" cy="12" r="9" />
+              <path d="M12 7.5v5.5M12 16.5h.01" />
+            </svg>
             <p id="job-error-text"></p>
             <button
               id="retry"
@@ -62,7 +75,13 @@
 
       <section class="pane pane--output" aria-labelledby="output-heading">
         <h2 id="output-heading" data-i18n="output.heading"></h2>
-        <p id="player-empty" class="placeholder" data-i18n="player.empty"></p>
+        <!-- The slate the video is drawn on: the background and text color that were picked,
+             at the shape the chosen quality produces. Decorative, because `app.js` fills it
+             with the user's own text and `aria-hidden` keeps that out of the reading order. -->
+        <div class="frame" id="preview-frame" aria-hidden="true">
+          <p class="frame-text" id="preview-frame-text"></p>
+        </div>
+        <p class="frame-meta" id="preview-meta"></p>
         <!-- The accessible name is the visible heading of this pane. -->
         <video
           id="player"

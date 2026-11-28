@@ -16,7 +16,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
+import shutil
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -26,7 +29,7 @@ import pytest
 
 from backend.app import app_meta, webui
 from backend.app import main as api_main
-from backend.app.models import ANIMATIONS, FONTS, QUALITIES, RenderParams
+from backend.app.models import ANIMATIONS, FONTS, NUMERIC_RANGES, QUALITIES, RenderParams
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 UI_FILES = ("index.html", "app.js", "i18n.js", "styles.css")
@@ -424,26 +427,15 @@ def test_every_control_has_a_label_in_both_locales(locales: Any) -> None:
             assert f"field.{name}.label" in messages, f"{locale_name}:{name}"
 
 
-def test_every_error_the_ui_can_show_has_a_translation(locales: Any) -> None:
+def test_every_error_the_ui_can_show_has_a_translation() -> None:
     """SPEC.md section 6: the UI shows the translation of a code and falls back to its message.
 
-    The codes named here are the ones this stage can realistically meet, and the whole set is
-    finished in ROADMAP 3.5.
+    ROADMAP 3.5 closed the set: the list lives in the test below, which reads the codes out of
+    the backend itself rather than remembering them here.
     """
-    reachable = {
-        "unreachable",
-        "unexpected",
-        "render_failed",
-        "render_timeout",
-        "render_output_missing",
-        "manim_missing",
-        "ffmpeg_missing",
-        "job_not_found",
-        "too_many_lines",
-        "total_duration_too_long",
-    }
+    locales = load_locales()
     for name, messages in locales.items():
-        assert {f"error.{code}" for code in reachable} <= set(messages), name
+        assert {f"error.{code}" for code in backend_error_codes()} <= set(messages), name
 
 
 def test_the_indonesian_copy_uses_indonesian_words(locales: Any) -> None:
@@ -618,7 +610,7 @@ def test_the_settings_are_remembered_under_the_name_from_app_meta() -> None:
     """SPEC.md section 8 asks for the last settings; the key keeps the app's own slug so the
     name still has one owner (SPEC.md section 3)."""
     source = app_source()
-    assert "${options.app.slug}" in source
+    assert "${options?.app.slug" in source
     assert "saveSettings();" in source
     assert "restoreSettings();" in source
 
@@ -778,7 +770,7 @@ def test_a_finished_video_does_not_start_moving_by_itself_when_motion_is_reduced
     assert 'const REDUCED_MOTION = "(prefers-reduced-motion: reduce)";' in source
     shown = source.split("async function showVideo(url) {", 1)[1].split("\n}", 1)[0]
     assert "window.matchMedia(REDUCED_MOTION).matches" in shown
-    assert 'setStatus(t("status.press_play"));' in shown
+    assert 'setStatus("status.press_play");' in shown
     assert "await view.player.play();" in shown  # the ordinary path still plays inline
 
 
@@ -1015,3 +1007,418 @@ def test_the_player_is_sized_from_the_quality_presets() -> None:
     payload = api_main.options_payload()
     presets = {entry["id"]: (entry["width"], entry["height"]) for entry in payload["qualities"]}
     assert presets["preview"] == (854, 480)
+
+
+# ------------------------------------------------------------------ localization (3.5)
+
+
+#: Backend files that put a code into a SPEC.md section 6 error object. The set is read out of
+#: these sources rather than copied into a test, so a new code arrives in the locale files
+#: because the suite noticed, not because the next person remembered (ROADMAP 3.5).
+ERROR_SOURCES = (
+    Path("backend/app/models.py"),
+    Path("backend/app/main.py"),
+    Path("backend/app/cache.py"),
+    Path("backend/app/videos.py"),
+    Path("backend/app/render.py"),
+    Path("backend/app/jobs.py"),
+    Path("backend/app/security.py"),
+    Path("backend/app/webui.py"),
+)
+
+#: The codes `app.js` invents for a failure that never reached the backend, and the fallback key
+#: `errorText` reads when no translation exists; neither is a code the backend can raise.
+UI_ONLY_CODES = frozenset({"unreachable", "unexpected", "http"})
+
+#: The fields of the SPEC.md section 5 schema, spelled as the UI names them: the two background
+#: controls the form shows for the one `background` object.
+TRANSLATED_FIELDS = (
+    "text",
+    "animation",
+    "animation_duration",
+    "hold_duration",
+    "font",
+    "font_size",
+    "text_color",
+    "outline_color",
+    "outline_width",
+    "background",
+    "background_type",
+    "quality",
+)
+
+#: The fields whose value must land inside a range, so only these can answer `_out_of_range`.
+NUMERIC_RANGE_FIELDS = tuple(NUMERIC_RANGES)
+
+#: Codes :func:`backend.app.models._derived_error` builds from a field name plus a suffix, so no
+#: source file holds them as literals. They are spelled out here instead, and
+#: `test_the_translated_field_names_are_the_schema` proves each name is still a real field: rename
+#: one and the stale code surfaces there rather than as an untranslated sentence on screen. Only a
+#: range-checked field can arrive with `_out_of_range`; `_invalid` is derived from any field the
+#: input gets wrong.
+DERIVED_CODES = frozenset(
+    f"{field}{suffix}"
+    for field in TRANSLATED_FIELDS
+    for suffix in (
+        ("_invalid", "_out_of_range") if field in NUMERIC_RANGE_FIELDS else ("_invalid",)
+    )
+)
+
+
+def load_locales() -> dict[str, dict[str, str]]:
+    return {
+        name: json.loads((REPO_ROOT / "ui" / "locales" / f"{name}.json").read_text("utf-8"))
+        for name in ("en", "id")
+    }
+
+
+def backend_error_codes() -> set[str]:
+    """Every code literal the backend can answer with."""
+    custom = re.search(
+        r"_CUSTOM_CODES = frozenset\(\s*\n?\s*\{(.*?)\}\s*\)",
+        (REPO_ROOT / "backend" / "app" / "models.py").read_text("utf-8"),
+        flags=re.S,
+    )
+    assert custom is not None, "the custom code list moved in models.py"
+    codes = set(re.findall(r'"([a-z_]+)"', custom.group(1)))
+    patterns = (
+        r'\bcode="([a-z_]+)"',
+        r'"code": "([a-z_]+)"',
+        r"error_object\(\s*\"([a-z_]+)\"",
+        r"_error_response\(\s*\d+,\s*\"([a-z_]+)\"",
+        r"_error\(\s*\d+,\s*\"([a-z_]+)\"",
+        r"CacheError\(\s*\"([a-z_]+)\"",
+        r"VideoError\(\s*\"([a-z_]+)\"",
+        r"RenderError\(\s*\"([a-z_]+)\"",
+        r"RenderParamsError\(\s*\"([a-z_]+)\"",
+        r"_fail\(\s*job,\s*\"([a-z_]+)\"",
+        r"_failure\(\s*destination_dir,\s*stem,\s*outcome\.output,\s*\"([a-z_]+)\"",
+    )
+    for relative in ERROR_SOURCES:
+        source = (REPO_ROOT / relative).read_text("utf-8")
+        for pattern in patterns:
+            codes |= set(re.findall(pattern, source, flags=re.S))
+    return codes
+
+
+def run_i18n_in_node(tmp_path: Path, body: str) -> str:
+    """Run a snippet against the real `ui/i18n.js` in the engine the page's module system runs in.
+
+    The bytes are the shipped file's, copied verbatim under a `.mjs` name: that is how Node is
+    told it is a module, the same job the page does with `<script type="module">`. Without the
+    extension Node reads any `package.json` above the file, and a repository root that happens to
+    carry one would silently turn the check into a CommonJS load. The snippet imports its own
+    names, so nothing collides.
+    """
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed, so the language rules cannot be executed here")
+    shipped = REPO_ROOT / "ui" / "i18n.js"
+    copy = tmp_path / "i18n.mjs"
+    copy.write_bytes(shipped.read_bytes())
+    module = "file:///" + copy.as_posix()
+    names = (
+        "DEFAULT_LOCALE, LOCALE_FILES, NATIVE_NAMES, errorText, loadLocale, locale, "
+        "lookup, pickLocale, systemLanguages, t"
+    )
+    imports = (
+        "import assert from 'node:assert';\n" + f"const {{ {names} }} = await import({module!r});\n"
+    )
+    script = tmp_path / "check.mjs"
+    script.write_text(imports + body, encoding="utf-8")
+    environment = {**os.environ, "MTS_UI_DIR": (REPO_ROOT / "ui").as_posix()}
+    result = subprocess.run(
+        [node, str(script)],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=environment,
+    )
+    assert result.returncode == 0, f"node said: {result.stderr}"
+    return result.stdout
+
+
+#: Node 21 and later ship a read-only `navigator` of their own, so the stubs are defined over it
+#: rather than assigned; a browser has no such property and the module only reads what is there.
+#: The fetch stub is the file:// stand-in for the origin FastAPI serves the page and the locale
+#: files from, so a snippet loads the same bytes the browser would.
+I18N_STUB = """
+import { readFileSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
+const UI = process.env.MTS_UI_DIR;
+const slot = (value) => ({ value, writable: true, configurable: true });
+const stub = (values) => Object.defineProperties(
+  globalThis,
+  Object.fromEntries(Object.entries(values).map(([name, value]) => [name, slot(value)]))
+);
+const send = (path) => ({ ok: true, json: async () => JSON.parse(readFileSync(path, 'utf8')) });
+stub({
+  window: {},
+  document: { documentElement: {} },
+  navigator: { languages: ["en-US"] },
+  fetch: async (url) => {
+    const file = url.replace('/locales/', '');
+    const path = `${UI}/locales/${file}`;
+    if (!['en.json', 'id.json'].includes(file)) {
+      throw new TypeError(`not served: ${url}`);
+    }
+    return send(path);
+  },
+});
+"""
+
+#: The language rules of SPEC.md section 8, executed rather than asserted about.
+I18N_LANGUAGE_CHECKS = (
+    I18N_STUB
+    + """
+const idTags = ["id-ID", "id", "id-ID-u-ca-gregory-nu-latn", "in-ID", "zh-CN", "en-US"];
+assert.deepEqual(
+  idTags.map((tag) => pickLocale([tag])),
+  ["id", "id", "id", "id", "en", "en"],
+  "the language subtag decides, not the whole tag"
+);
+assert.deepEqual(pickLocale(["zh-CN", "id-ID"]), "id", "any tag in the list may carry it");
+const nothing = "a machine that reports nothing is not Indonesian";
+assert.equal(pickLocale([]), DEFAULT_LOCALE, nothing);
+const letters = "a tag must be the language, not start with its letters";
+assert.equal(pickLocale(["idiomatic"]), "en", letters);
+const cased = "the check does not depend on the browser's lowercasing";
+assert.equal(pickLocale(["EN"]), "en", cased);
+stub({ window: { mtsSystemLanguages: ["id-ID"] } });
+stub({ navigator: { languages: ["en-US"], language: "en-US" } });
+assert.deepEqual(systemLanguages(), ["id-ID"], "the Electron bridge wins when it is there");
+stub({ window: {} });
+assert.deepEqual(systemLanguages(), ["en-US"], "navigator.languages is the browser path");
+stub({ navigator: { languages: [], language: "de-DE" } });
+assert.deepEqual(systemLanguages(), ["de-DE"], "navigator.language is the older fallback");
+stub({ navigator: {} });
+assert.deepEqual(systemLanguages(), [], "a host that reports nothing is handled");
+assert.equal(LOCALE_FILES.id, "/locales/id.json");
+assert.deepEqual(Object.keys(NATIVE_NAMES), ["en", "id"]);
+stub({ navigator: { languages: ["en-US"] } });
+await loadLocale("en");
+assert.equal(pickLocale(systemLanguages()), "en");
+assert.equal(document.documentElement.lang, "en");
+await loadLocale("id");
+assert.equal(locale(), "id", "the Indonesian file loads through the same path the page uses");
+assert.equal(document.documentElement.lang, "id");
+assert.equal(t("settings.heading"), "Pengaturan");
+assert.equal(lookup("settings.heading"), "Pengaturan");
+await loadLocale("en");
+assert.equal(lookup("settings.heading"), "Settings", "a switch back reloads the other file");
+console.log("language rules ok");
+"""
+)
+
+
+def test_the_language_rules_run_in_the_browsers_own_engine(tmp_path: Path) -> None:
+    """Node executes the same ES module the page imports, over stubbed `navigator` objects."""
+    out = run_i18n_in_node(tmp_path, I18N_LANGUAGE_CHECKS)
+    assert out.strip().endswith("language rules ok")
+
+
+#: The three rungs of SPEC.md section 6: the code's translation, its numbers, then the English
+#: message the backend sent.
+I18N_ERROR_CHECKS = (
+    I18N_STUB
+    + """
+await loadLocale("en");
+const cases = [
+  [errorText({ code: "text_too_long", params: { max: 100, got: 137 } }), "137 characters"],
+  [errorText({ code: "http_418", params: { status: 418 } }), "HTTP 418"],
+  [errorText({ code: "never_seen_in_any_locale", params: {}, message: "the raw fallback" }),
+   "the raw fallback"],
+];
+const failed = cases.filter(([text, expected]) => !text.includes(expected));
+assert.deepEqual(failed, [], JSON.stringify(cases));
+const indonesian = JSON.parse(readFileSync(`${UI}/locales/id.json`, 'utf8'));
+await loadLocale("id");
+assert.equal(locale(), "id");
+assert.equal(errorText({ code: "job_not_found", params: {} }), indonesian["error.job_not_found"]);
+const english = "instead of a result";
+const status = errorText({ code: "http_503", params: { status: 503 } });
+assert.ok(!status.includes(english), status);
+assert.ok(status.includes("Kodanya HTTP 503"), status);
+const grouped = errorText({ code: "text_too_long", params: { max: 100, got: 1234 } });
+assert.ok(grouped.includes("1.234"), grouped);
+console.log("error copy ok");
+"""
+)
+
+
+def test_the_error_copy_prefers_the_code_and_keeps_the_fallback(tmp_path: Path) -> None:
+    """The translation of a `code` wins; an unknown code falls back to the English `message`."""
+    out = run_i18n_in_node(tmp_path, I18N_ERROR_CHECKS)
+    assert out.strip().endswith("error copy ok")
+
+
+def test_every_backend_error_code_is_translated_in_both_locales(
+    locales: dict[str, dict[str, str]],
+) -> None:
+    """ROADMAP 3.5: the error codes are translated, all of them, in both languages."""
+    codes = backend_error_codes() | DERIVED_CODES
+    assert len(codes) >= 30, f"only {len(codes)} codes were found; the extraction has rotted"
+    for name, messages in locales.items():
+        missing = sorted(code for code in codes if f"error.{code}" not in messages)
+        assert not missing, f"{name} is missing {missing}"
+
+
+def test_the_translated_field_names_are_the_schema() -> None:
+    """A derived code is only worth translating while the field it names exists.
+
+    The UI's two background controls edit the one `background` object, so `background_type` is the
+    exception the schema does not carry; every other name has to be a real field.
+    """
+    fields = set(RenderParams.model_fields) | {"background_type"}
+    assert set(TRANSLATED_FIELDS) <= fields, sorted(set(TRANSLATED_FIELDS) - fields)
+
+
+def test_no_locale_translates_a_code_that_no_longer_exists(
+    locales: dict[str, dict[str, str]],
+) -> None:
+    """The other direction: retired copy reads as live wording and hides a removed code."""
+    for name, messages in locales.items():
+        error_keys = {
+            key.removeprefix("error.")
+            for key in messages
+            if key.startswith("error.") and key != "error.unexpected"
+        }
+        stray = sorted(error_keys - backend_error_codes() - DERIVED_CODES - UI_ONLY_CODES)
+        assert not stray, f"{name} translates codes nothing raises: {stray}"
+
+
+def test_the_parity_rule_fails_for_a_key_present_in_only_one_file() -> None:
+    """The acceptance ROADMAP 3.5 states, demonstrated: one key in one file, and the rule is red.
+
+    `test_the_two_locale_files_hold_the_same_keys` is the rule; this shows the rule bites, by
+    re-running its assertion on a copy with one key removed.
+    """
+    messages = load_locales()
+    for dropped in ("error.text_too_long", "language.label"):
+        assert dropped in messages["en"], dropped
+        short = {key: value for key, value in messages["en"].items() if key != dropped}
+        with pytest.raises(AssertionError):
+            assert set(short) == set(messages["id"])
+
+
+def test_both_locale_files_use_the_same_placeholders(locales: dict[str, dict[str, str]]) -> None:
+    """A `{max}` in one file only shows a literal brace to the other language."""
+    holder = re.compile(r"\{(\w+)\}")
+    for key, english in locales["en"].items():
+        assert key in locales["id"], key
+        assert set(holder.findall(english)) == set(holder.findall(locales["id"][key])), key
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["language.label", "error.text_too_long", "error.params_not_json", "error.http"],
+)
+def test_the_new_copy_is_actually_indonesian(key: str, locales: dict[str, dict[str, str]]) -> None:
+    """A guard for the strings this task adds, so `id` is not the English file under a new name."""
+    assert locales["id"][key] != locales["en"][key], key
+
+
+def test_the_indonesian_file_keeps_indonesian_spelling(locales: dict[str, dict[str, str]]) -> None:
+    """Everyday words are translated; "render" stays the borrowed verb of the trade."""
+    english_words = ("color", "favorite", "your video", "settings", "cancel", "language")
+    for key, value in locales["id"].items():
+        for word in english_words:
+            assert word.lower() not in value.lower(), f"id:{key} = {value!r}"
+
+
+def test_the_language_picker_is_an_option_list_with_a_label(html: str) -> None:
+    """SPEC.md section 8: a switcher the keyboard reaches and a screen reader can name."""
+    select = re.search(r'<select[^>]*id="language"[^>]*></select>', html)
+    assert select is not None
+    assert 'data-i18n-title="language.title"' in select.group(0)
+    label = re.search(r'<label[^>]*for="language"[^>]*data-i18n="language\.label"', html)
+    assert label is not None
+
+
+def test_the_picker_names_each_language_in_its_own_words(
+    locales: dict[str, dict[str, str]],
+) -> None:
+    """A picker whose options are translated cannot be read by the person switching to read it, so
+    the names live in `i18n.js` and no locale file carries them (SPEC.md section 8)."""
+    source = (REPO_ROOT / "ui" / "i18n.js").read_text("utf-8")
+    assert "export const NATIVE_NAMES = {" in source
+    assert 'id: "Bahasa Indonesia"' in source
+    for name, messages in locales.items():
+        for key, value in messages.items():
+            assert "Bahasa Indonesia" not in value, f"{name}:{key}"
+            assert value.strip() != "English", f"{name}:{key}"
+
+
+def test_the_chosen_language_is_remembered_and_shown_as_the_truth() -> None:
+    """The override survives a reload, and the select reports the locale on screen, which may have
+    been decided by the system rather than by the user."""
+    source = app_source()
+    assert 'const LOCALE_SUFFIX = "locale.v1";' in source
+    assert "writeStoredString(localeKey(), requested);" in source
+    assert "const stored = readStoredString(localeKey());" in source
+    assert "select.value = locale();" in source
+
+
+def test_switching_language_rebuilds_the_form_and_keeps_the_values() -> None:
+    """A label, an option and an `Intl` hint are all made when the form is built, so the switch
+    rebuilds the form and carries the user's values across it."""
+    body = app_source().split("async function switchLocale(requested) {", 1)[1].split("\n}", 1)[0]
+    for step in (
+        "await loadLocale(requested);",
+        "applyText(document);",
+        "applyDocumentTitle(options.app.name);",
+        "buildForm();",
+        "applyFormValues(values);",
+        "syncSliders();",
+        "paintPreview();",
+        "sizePlayer();",
+    ):
+        assert step in body, step
+    assert "const values = currentFormValues();" in body
+
+
+def test_the_lines_that_are_already_visible_get_said_again() -> None:
+    """The status under a running render and an error on screen must not stay in the old
+    language, and a new error replaces the remembered one."""
+    source = app_source()
+    assert "lastStatusKey = key;" in source
+    assert "setStatus(lastStatusKey);" in source
+    assert "view.errorText.textContent = errorText(lastError);" in source
+    assert "lastError = api;" in source
+    hide = source.split("function hideError() {", 1)[1].split("\n}", 1)[0]
+    assert "lastError = null;" in hide
+
+
+def test_an_http_status_without_an_error_object_shares_one_line() -> None:
+    """A response with no JSON error body has no stable code, so one translated line carries the
+    status number instead of inventing a key per code."""
+    source = (REPO_ROOT / "ui" / "i18n.js").read_text("utf-8")
+    assert 'startsWith("http")' in source
+    assert 'lookup("error.http")' in source
+    assert "code: `http_${response.status}`" in app_source()
+
+
+def test_the_language_row_cannot_clip_indonesian() -> None:
+    """SPEC.md section 8 asks the layout to tolerate the longer language. The picker is a shrinkable
+    flex item and nothing in its row fixes a width or hides what overflows, so "Basa Inggris" and
+    the Indonesian label both fit the way the English copy does."""
+    css = style_source()
+    header = css.split(".masthead {", 1)[1].split("}", 1)[0]
+    row = css.split(".language {", 1)[1].split("}", 1)[0]
+    select = css.split(".language select {", 1)[1].split("}", 1)[0]
+    assert "flex-wrap: wrap" in header
+    for block, name in ((row, ".language"), (select, ".language select")):
+        for forbidden in ("max-inline-size", "overflow: hidden", "text-overflow"):
+            assert forbidden not in block, f"{name}: {forbidden}"
+
+
+def test_the_boot_decides_the_language_before_the_first_paint() -> None:
+    """No English flash: the locale is chosen and loaded before any text reaches the screen, and
+    the override is read after the options arrive, since it lives under the app's own slug."""
+    body = app_source().split("async function boot() {", 1)[1].split("\nboot();", 1)[0]
+    assert body.count("openingLocale()") == 1
+    assert body.index("await requestJson(ENDPOINTS.options);") < body.index("openingLocale()")
+    assert body.index("openingLocale()") < body.rindex("applyText(document);")
+    # The failure path still needs a locale before it can say anything, and it says it in English,
+    # since the only thing that answers in that path is the code of the failed request itself.
+    assert body.index("await tryLocale(DEFAULT_LOCALE);") < body.index("showError(failure);")
